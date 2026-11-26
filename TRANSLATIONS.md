@@ -406,10 +406,11 @@ no place in `tr_msg`, `tr_site_msg` or the change-marker path; it goes to the tr
 as `private` and its answer is returned and dropped. What the two share is the provider mode and
 nothing above it.
 
-**`sourceLocale` is nullable, and null is an answer.** It means "whoever translates decides", which is
-the ordinary case for a conversation body: nobody writing on a Site is asked which language they are
-writing in, because every provider detects it for itself. Core must never put a Site's default there --
-that would tell a translator German about Portuguese text.
+**`sourceLocale` is nullable, and null is an answer.** It means "whoever translates decides". A
+conversation body passes what its writer declared beside it (design/THREADS.md section 14), and null for
+a message that declared nothing -- one written before the picker, or delivered without a language. A
+message whose declared language already reads as the target is not sent at all. Core must never put a
+Site's default there -- that would tell a translator German about Portuguese text.
 
 **The detected source language comes back.** A DeepL translation reports what it read each text as, per
 text and not per request, so a caller that wanted only the language has already paid for it by asking

@@ -794,7 +794,7 @@ differs -- and arriving is exactly the part that should differ.
 
 ## 14. The language a message is written in
 
-**The column is built and only an integration writes it. Translating one is built too.**
+**The column is built; the writer declares it, a person as well as an integration. Translating one is built too.**
 
 ### The stored fact
 
@@ -806,21 +806,37 @@ for -- one language per conversation would be wrong in exactly the situation tha
 `NULL` means not declared. It is not a claim that the message is in the Site's default language, and
 nothing may read it as one.
 
-**No person is asked, and no Site route accepts it.** The obvious design -- the writer declares it in a
-picker -- was built and taken out again. A translator determines the source language itself, so asking
-would have put a field in front of everyone who writes for an answer that is available for nothing; and
-the only thing a declared language would have bought is deciding *whether there is anything to
-translate*, which pays where translating happens automatically and it never does here. It happens when
-one person presses one button, and that person is the better filter.
+**The writer declares it** (owner decision, 2026-11-26). Every Site form that writes a message -- the
+reply composer, the internal note in a customer file, opening a conversation, asking Support, a Supporter
+opening a ticket -- carries a language picker beside the message. It opens on the writer's own language
+(`viewer.preferredLocale`, else the locale the page is read in) and offers the Site's languages, so for
+almost everybody declaring is not touching it. The Site routes take it as an optional `sourceLang` in
+the body (the name `PhisThreadMessage.sourceLang` reads it back under): `POST /api/site/threads`,
+`POST /api/site/threads/messages`, `POST /api/site/threads/<threadId>/messages`,
+`POST /api/site/support/request` and `POST /api/site/support/tickets`. Absent, `null` or empty declares
+nothing; anything else that is not a key of the capability table is a 400 before anything is written.
+
+The reason is the translate link. Without a declared language the surface could not tell a German
+message from any other, so it offered *Translate* on every message -- the owner's own German messages,
+read in German, carried it, which looks wrong and, pressed, pays DeepL to turn German into German. A
+declared language is what lets the link appear only where a message is in another language than the
+reader's (section "Translating one, on request" below). The earlier design -- nobody is asked, the person
+who does not understand a message is the filter -- was built that way on 2026-09-25 (phis-ui `0ea53a9`)
+and is replaced by this one: the filter it relied on is a control that is drawn on every row whether
+anybody needs it or not.
+
+A declaration is a declaration whoever makes it: stored as it resolves and **without** `LangDetected`.
+`Confidential` messages store it too; the language never leaves Core with the body, because the body
+does not leave.
 
 **An integration writes it, because an integration already knows.** A mail header, the locale of the
 page a form was submitted from, the browser language a chat widget saw -- these are facts that arrive
-with the message and are lost if there is nowhere to put them. The write path is therefore exactly one:
-`messageSourceLang` on the threads capability's `create` and `reply`. Nothing else sets it.
+with the message and are lost if there is nowhere to put them. Its write path is `messageSourceLang` on
+the threads capability's `create` and `reply`.
 
 **A translation fills it too, and says that it did.** The language a provider recognised comes back as a
 field on a translation that was paid for anyway, so throwing it away would have left the column empty for
-every message a person ever wrote -- which is to say for almost all of them, since no surface declares one.
+every message written before the picker, and for every one an integration delivered without a language.
 It is stored only where the column is `NULL`, and it carries `LangDetected` (32).
 
 That flag is the difference between an assertion and a guess. An integration states the language from
@@ -848,11 +864,12 @@ know is a 400 and not a stored `NULL`: the two say different things, and an inte
 nobody recognises has a bug its author would never learn about if Core absorbed it. Aliases resolve on
 the way in, so `zh-CN` is stored as `zh-Hans` and one language is one key however it arrived.
 
-**An integration asserts, and nothing contradicts it.** Core checks that the key is well-formed, not
-that it is true: an integrator writing `de` over Portuguese text misleads every reader, including a
-filter that routes on it. No guard is built for this, because no Add-on delivers messages yet and a rule
-nobody can break is a rule nobody can read the purpose of. It is named here so that the first one to
-deliver messages is the occasion to decide, rather than the occasion to discover.
+**A writer asserts, and nothing contradicts it.** Core checks that the key is well-formed, not that it
+is true: an integrator writing `de` over Portuguese text misleads every reader, including a filter that
+routes on it -- and so does a person who writes Portuguese and leaves the picker on German, whose message
+then offers a German reader no translation. No guard is built for this; a recognised language never
+overrides a declared one, because the guess is the weaker of the two. It is named here so that the first
+case that matters is the occasion to decide, rather than the occasion to discover.
 
 **Withheld with the body.** A `Redacted` message, and a `Confidential` one projected for an Add-on,
 report `NULL` -- for the reason their assets are withheld (section 4): what a withdrawn message was
@@ -870,6 +887,13 @@ not the translated text, not a record that it was shown.
 
 - **Only when asked.** Never automatic, never a consequence of two languages differing, and never
   ahead of time. A Site that shows a thread shows originals.
+- **Not into the language it is already written in.** A known source language -- declared, or recognised
+  by an earlier translation -- that reads as the target answers with the original text and calls no
+  provider: one language whatever the region (`de` for `de-AT`, `pt` for `pt-BR`, `en-US` for `en-GB`),
+  but not across scripts (`zh-Hans` is not `zh-Hant`), by the capability table's language and script
+  (`isPhiSameWrittenLanguage`). The first-party surface does not draw the control for such a message at
+  all; the route answers so for a caller that asks anyway. An unknown language is the provider's to
+  detect, as before.
 - **One message at a time**, into one target locale the caller names. A Site surface names the reader's
   own configured language and offers no choice at the message: a translation is billed by the text sent
   whether or not anybody reads it, and a language picker on every row invites trying two more of them on

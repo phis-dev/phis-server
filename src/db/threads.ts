@@ -1012,17 +1012,26 @@ export async function getThreadDetail(
 /**
  * Resolves the declared source language, or refuses it.
  *
+ * Two kinds of writer declare one: an integration, from something it has (a mail header, the locale of
+ * a form's page), and a person, in the picker beside the composer -- which opens on the language they
+ * read in and offers the Site's languages. Both arrive here and both are stored without `LangDetected`,
+ * because both are a declaration rather than a guess. The Site routes call this themselves before they
+ * write anything, so a refused key is a 400 for the body that sent it and never half a transaction.
+ *
  * The vocabulary is the platform's locale capability table and deliberately not the Site's own locale
  * list: what a Site publishes in is one question, and what a person wrote in is another. A customer
  * writing Portuguese to a Site that runs German and English has still written Portuguese, and dropping
  * the fact because the Site does not publish it would lose exactly what makes the field worth having.
  *
- * Absent or empty is `not declared` and stores null. Anything the table does not know is refused rather
- * than quietly nulled: a picker that sends an unknown key is broken, and the writer would never learn
- * it. Aliases resolve -- `zh-CN` is stored as `zh-Hans` -- so one language is one key however it
- * arrived.
+ * Absent, null or empty is `not declared` and stores null. Anything else that is not a key the table
+ * knows -- a number, an object, `xx` -- is refused rather than quietly nulled: a picker that sends an
+ * unknown key is broken, and the writer would never learn it. Aliases resolve -- `zh-CN` is stored as
+ * `zh-Hans`, `de_de` as `de-DE` -- so one language is one key however it arrived.
  */
-function normalizeMessageSourceLang(value: string | null | undefined) {
+export function normalizeMessageSourceLang(value: unknown) {
+  if (value != null && typeof value !== "string") {
+    throw new PhisThreadError("The message language has to be a locale key.");
+  }
   const raw = typeof value === "string" ? value.trim() : "";
   if (!raw) {
     return null;
@@ -2097,7 +2106,10 @@ export type ThreadMessageTranslationSource = {
   flags: number;
   /** `body_markdown` where there is one: control characters survive a translation, so it loses nothing. */
   body: string;
-  /** What an integration recorded, or null for "whoever translates decides". */
+  /**
+   * What the writer declared -- a person in the composer's picker, an integration from what it has -- or
+   * what an earlier translation recognised (`LangDetected`); null for "whoever translates decides".
+   */
   sourceLang: string | null;
 };
 

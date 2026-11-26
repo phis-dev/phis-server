@@ -29,6 +29,7 @@ import {
   getThreadDetail,
   listThreadsForUser,
   markThreadRead,
+  recordDetectedThreadMessageSourceLang,
   setThreadLocked,
   setThreadStatus,
 } from "./threads";
@@ -175,6 +176,55 @@ describe("threads", () => {
       .not.toBeNull();
     expect(await getThreadDetail(site.id, { kind: "user", userId: stranger }, opened.thread.id))
       .toBeNull();
+  });
+
+  it("keeps the language a writer declared, resolved and unflagged, and never trades it for a guess", async () => {
+    await requirePhiTestDatabase();
+    const site = await createPhiTestSite("threads-lang");
+    await offerAllThreadKinds(site);
+    const { users: [opener, colleague] } = await createStaffWhoShareAGroup(site, "pgtest-lang", 2);
+    const reader = { kind: "user", userId: colleague } as const;
+
+    const opened = await createThread({
+      siteId: site.id,
+      kind: PhisThreadKind.Direct,
+      subject: "Sprache",
+      message: "Hallo.",
+      messageSourceLang: "de_de",
+      participantUserIds: [colleague],
+      createdByUserId: opener,
+    });
+    await addThreadMessage({
+      siteId: site.id,
+      threadId: opened.thread.id,
+      reader,
+      message: "Nihao.",
+      messageSourceLang: "zh-CN",
+    });
+    await addThreadMessage({ siteId: site.id, threadId: opened.thread.id, reader, message: "Undeclared." });
+
+    const messages = (await getThreadDetail(site.id, reader, opened.thread.id))?.messages ?? [];
+    expect(messages.map((message) => message.sourceLang)).toEqual(["de-DE", "zh-Hans", null]);
+    // Declared, not recognised: none of them carries the flag a translator's guess comes with.
+    expect(messages.every((message) => (message.flags & PhisThreadMessageFlag.LangDetected) === 0)).toBe(true);
+
+    // A translation recognising something else afterwards writes over nothing that was declared ...
+    const [declared, , undeclared] = messages;
+    expect(await recordDetectedThreadMessageSourceLang({
+      siteId: site.id, threadId: opened.thread.id, messageId: declared!.id, locale: "en",
+    })).toBe(false);
+    // ... and fills only the message that said nothing, flagged as the guess it is.
+    expect(await recordDetectedThreadMessageSourceLang({
+      siteId: site.id, threadId: opened.thread.id, messageId: undeclared!.id, locale: "en",
+    })).toBe(true);
+    const after = (await getThreadDetail(site.id, reader, opened.thread.id))?.messages ?? [];
+    expect(after.map((message) => message.sourceLang)).toEqual(["de-DE", "zh-Hans", "en"]);
+    expect((after[2]!.flags & PhisThreadMessageFlag.LangDetected) !== 0).toBe(true);
+
+    // A key the platform does not know is refused, not stored as nothing.
+    await expect(addThreadMessage({
+      siteId: site.id, threadId: opened.thread.id, reader, message: "?", messageSourceLang: "xx",
+    })).rejects.toThrow(/Unknown message language/u);
   });
 
   it("names a person without a profile name by nothing, never by their address", async () => {

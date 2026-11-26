@@ -7,7 +7,7 @@ import {
   SUPPORT_TICKET_PRIORITY_NORMAL,
   SupportAdministrationError,
 } from "@/db/support";
-import { PhisThreadError } from "@/db/threads";
+import { normalizeMessageSourceLang, PhisThreadError } from "@/db/threads";
 import { requireSiteSupportApiContext } from "@/lib/guards/site-admin-api";
 import { readSupportTicketReach } from "@/lib/support-reach";
 import { logRuntimeEvent } from "@/lib/log";
@@ -88,6 +88,16 @@ export async function POST(request: NextRequest) {
   if (!message) {
     return NextResponse.json({ error: "message is required." }, { status: 400 });
   }
+  // What that first message is written in, as the Supporter declared it beside it.
+  let sourceLang: string | null;
+  try {
+    sourceLang = normalizeMessageSourceLang(body.sourceLang);
+  } catch (cause) {
+    if (cause instanceof PhisThreadError) {
+      return NextResponse.json({ error: cause.message }, { status: 400 });
+    }
+    throw cause;
+  }
 
   let ticket: Awaited<ReturnType<typeof createSupportTicket>>;
   try {
@@ -96,6 +106,7 @@ export async function POST(request: NextRequest) {
       typeId,
       message,
       messageMarkdown: normalizeNullableString(body.messageMarkdown),
+      messageSourceLang: sourceLang,
       status: normalizeNullableInteger(body.status) ?? undefined,
       channel: normalizeNullableInteger(body.channel) ?? SUPPORT_TICKET_CHANNEL_INTERNAL,
       priority: normalizeNullableInteger(body.priority) ?? SUPPORT_TICKET_PRIORITY_NORMAL,

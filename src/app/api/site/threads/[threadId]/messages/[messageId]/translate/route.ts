@@ -9,7 +9,7 @@ import {
 } from "@/db/threads";
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
 import { normalizeString, parseStrictPositiveInt, readRequestBody } from "@/lib/helpers/request";
-import { resolvePhiLocaleCapability } from "@/lib/locale";
+import { isPhiSameWrittenLanguage, resolvePhiLocaleCapability } from "@/lib/locale";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import { resolvePhisTranslationOffer } from "@/lib/translation-offer";
 import { requestPhisTranslationUnit } from "@/lib/translation-unit";
@@ -105,6 +105,26 @@ export async function POST(
     );
   }
 
+  /*
+   * Already written in the language asked for: the original is the answer, and nobody is billed for it.
+   *
+   * A known source language -- declared by the writer, or recognised by an earlier translation -- that
+   * reads as the target (`isPhiSameWrittenLanguage`: `de` for `de-AT`, never `zh-Hant` for `zh-Hans`)
+   * would have sent German to the provider to come back German, charged by its length. The surface does
+   * not offer the control for such a message, so this is the answer for a caller that asks anyway, in the
+   * shape every other answer has. Unknown stays the provider's to decide, below.
+   */
+  if (source.sourceLang && isPhiSameWrittenLanguage(source.sourceLang, requestedLocale)) {
+    return NextResponse.json({
+      translation: {
+        messageId,
+        targetLocale: requestedLocale,
+        sourceLocale: source.sourceLang,
+        text: source.body,
+      },
+    });
+  }
+
   const result = await requestPhisTranslationUnit({
     locale: requestedLocale,
     msgs: [source.body],
@@ -118,11 +138,12 @@ export async function POST(
      * caller says nothing until somebody measures what saying something does.
      */
     /*
-     * What an integration recorded, and null otherwise.
+     * What the writer declared -- a person in the composer's picker, an integration from what it has --
+     * or what an earlier translation recognised, and null otherwise.
      *
-     * Null is the contract's way of saying "you decide", and it is the ordinary case: nobody writing on a
-     * Site is asked which language they are writing in, because every provider detects it for itself. The
-     * Site's default must never stand in here -- it would tell a translator German about Portuguese text.
+     * Null is the contract's way of saying "you decide": a message written before anybody declared one,
+     * or delivered without one. The Site's default must never stand in here -- it would tell a translator
+     * German about Portuguese text.
      */
     sourceLocale: source.sourceLang,
     format: "text",
@@ -186,7 +207,7 @@ export async function POST(
       /*
        * Which language it came out of, where anybody said so.
        *
-       * The provider's detection first, because it looked at this text, and what an integration recorded
+       * The provider's detection first, because it looked at this text, and what the writer declared
        * second. Null where neither knows, and a surface that cannot name the source simply does not name
        * it -- a translation marked as machine-made is honest without it.
        */

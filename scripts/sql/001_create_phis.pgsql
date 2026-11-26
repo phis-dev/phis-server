@@ -1445,12 +1445,11 @@ CREATE TABLE IF NOT EXISTS phis.thread_messages (
   author_provider_id VARCHAR(255) NULL,
   body_text TEXT NOT NULL,
   body_markdown TEXT NULL,
-  -- The language the body is written in. Nobody is asked for it: no person gets a language picker and no
-  -- Site route accepts one, because a translator determines the source language itself. Two things write
-  -- it. An integration declares it through the threads capability, from something it has -- a mail header,
-  -- the locale of a form's page. And a translation of a message that declared none stores what the
-  -- provider recognised, because that arrives free with a translation somebody paid for and dropping it
-  -- would leave the column empty for everything a person ever wrote. The second carries flag 32,
+  -- The language the body is written in, as its writer declared it: a person in the picker beside the
+  -- composer (Site routes, `sourceLang`), an integration through the threads capability, from something it
+  -- has -- a mail header, the locale of a form's page. Besides that, a translation of a message that
+  -- declared none stores what the provider recognised, because that arrives free with a translation
+  -- somebody paid for and dropping it would leave the column empty for every undeclared message. The second carries flag 32,
   -- LangDetected, and never overwrites the first: a declaration is not a guess, and a guess about five
   -- characters is a coin toss that a router must be able to recognise as one.
   -- NULL is never to be read as the Site's default. It names a locale from the platform capability

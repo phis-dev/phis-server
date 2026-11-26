@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { addThreadMessage, PhisThreadError } from "@/db/threads";
+import { addThreadMessage, normalizeMessageSourceLang, PhisThreadError } from "@/db/threads";
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
 import {
@@ -47,6 +47,21 @@ export async function writePhisSiteThreadMessage(
     return NextResponse.json({ error: "message is required." }, { status: 400 });
   }
 
+  /*
+   * The language the writer declared in the picker beside the composer -- a note in a customer file the
+   * same as a reply. Optional; refused before the write where it is no locale key the platform knows,
+   * because a picker sending one is broken and nobody would learn it from a stored null.
+   */
+  let sourceLang: string | null;
+  try {
+    sourceLang = normalizeMessageSourceLang(body.sourceLang);
+  } catch (cause) {
+    if (cause instanceof PhisThreadError) {
+      return NextResponse.json({ error: cause.message }, { status: 400 });
+    }
+    throw cause;
+  }
+
   let thread;
   try {
     thread = await addThreadMessage({
@@ -55,6 +70,7 @@ export async function writePhisSiteThreadMessage(
       reader: { kind: "user", userId },
       message,
       messageMarkdown: normalizeString(body.messageMarkdown) || null,
+      messageSourceLang: sourceLang,
       // Normalized against who is writing: `Internal` needs Staff, and the flags Core owns are ignored. A
       // number from a REST caller, a string from a Form's choice: the same flags either way.
       messageFlags: normalizeNullableInteger(body.messageFlags) ?? 0,

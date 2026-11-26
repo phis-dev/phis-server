@@ -213,6 +213,26 @@ export function requirePhiTranslationLocale(input: string): string {
   return capability.locale;
 }
 
+/**
+ * Whether text written in one locale reads as written for another, by the capability table.
+ *
+ * The language and the script decide, and the region does not: `pt-BR` and `pt`, or `en-US` and `en-GB`,
+ * are one language to a reader even though DeepL keeps a target for each, while `zh-Hans` and `zh-Hant`
+ * are one language in two scripts, and somebody who reads one is not thereby reading the other. That is
+ * the table's own distinction -- it carries a script for exactly those -- and splitting the key at its
+ * first hyphen would have lost it.
+ *
+ * False wherever either side is no locale the table knows: an unknown language is never "the same".
+ */
+export function isPhiSameWrittenLanguage(left: string | null | undefined, right: string | null | undefined) {
+  const a = resolvePhiLocaleCapability(left);
+  const b = resolvePhiLocaleCapability(right);
+  if (!a || !b) {
+    return false;
+  }
+  return a.language === b.language && (a.script ?? null) === (b.script ?? null);
+}
+
 export function getPhiLocaleCapability(locale: string | null | undefined): PhiLocaleCapability {
   return resolvePhiLocaleCapability(locale) ?? resolvePhiLocaleCapability(PHI_CANONICAL_SOURCE_LOCALE) as PhiLocaleCapability;
 }

@@ -273,6 +273,8 @@ export type CreateSupportTicketInput = {
   /** The first thing said about it, which opens the ticket's thread. */
   message: string;
   messageMarkdown?: string | null;
+  /** What that first message is written in, as its writer declared it. See `normalizeMessageSourceLang`. */
+  messageSourceLang?: string | null;
   status?: number;
   channel: number;
   priority?: number;
@@ -1134,6 +1136,7 @@ export async function createSupportTicket(input: CreateSupportTicketInput) {
       subject: input.subject,
       message: input.message,
       messageMarkdown: input.messageMarkdown ?? null,
+      messageSourceLang: input.messageSourceLang ?? null,
       participantUserIds: input.requesterUserId ? [input.requesterUserId] : [],
       participantGroupIds: [queue.group_id],
       requesterUserId: input.requesterUserId ?? null,

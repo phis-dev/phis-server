@@ -7,7 +7,7 @@ import {
   hasSupportEntryQueue,
 } from "@/db/support";
 import { SupportAllowanceExhaustedError } from "@/db/support-allowance";
-import { PhisThreadError } from "@/db/threads";
+import { normalizeMessageSourceLang, PhisThreadError } from "@/db/threads";
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
 import { normalizePositiveIdArray, normalizeString, readRequestBody } from "@/lib/helpers/request";
@@ -51,6 +51,16 @@ export async function POST(request: NextRequest) {
   }
   if (subject.length > 200) {
     return NextResponse.json({ error: "That subject is too long." }, { status: 400 });
+  }
+  // What the first message is written in, as the person declared it beside it; refused where it is no key.
+  let sourceLang: string | null;
+  try {
+    sourceLang = normalizeMessageSourceLang(body.sourceLang);
+  } catch (cause) {
+    if (cause instanceof PhisThreadError) {
+      return NextResponse.json({ error: cause.message }, { status: 400 });
+    }
+    throw cause;
   }
 
   /*
@@ -103,6 +113,7 @@ export async function POST(request: NextRequest) {
       typeId: type.id,
       subject,
       message,
+      messageSourceLang: sourceLang,
       channel: SUPPORT_TICKET_CHANNEL_PORTAL,
       requesterUserId,
       createdByUserId: requesterUserId,

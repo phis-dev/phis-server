@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import type { PhisThreadKindValue, PhisThreadStatusValue } from "@phis/contracts/threads";
 
-import { createThread, listThreadsForUser, PhisThreadError } from "@/db/threads";
+import { createThread, listThreadsForUser, normalizeMessageSourceLang, PhisThreadError } from "@/db/threads";
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
 import {
@@ -91,6 +91,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "kind is required." }, { status: 400 });
   }
 
+  /*
+   * The language the writer declared for the opening message, in the picker beside it.
+   *
+   * Optional, and a declaration where it is sent: stored as it is resolved, without `LangDetected`. A key
+   * the platform does not know is the body's fault and said so before anything is written.
+   */
+  let sourceLang: string | null;
+  try {
+    sourceLang = normalizeMessageSourceLang(body.sourceLang);
+  } catch (cause) {
+    if (cause instanceof PhisThreadError) {
+      return NextResponse.json({ error: cause.message }, { status: 400 });
+    }
+    throw cause;
+  }
+
   let thread;
   try {
     thread = await createThread({
@@ -99,6 +115,7 @@ export async function POST(request: NextRequest) {
       subject,
       message,
       messageMarkdown: normalizeString(body.messageMarkdown) || null,
+      messageSourceLang: sourceLang,
       messageFlags: normalizeNullableInteger(body.messageFlags) ?? 0,
       participantUserIds: normalizePositiveIdArray(body.participantUserIds),
       participantGroupIds: normalizePositiveIdArray(body.participantGroupIds),
