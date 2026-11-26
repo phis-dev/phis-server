@@ -1,5 +1,6 @@
-phis (0.8.2-1) unstable; urgency=medium
+phis (0.8.3-1) unstable; urgency=medium
 
+  * Include HEAD dispatch in the generated API reference.
   * Needs @phis/contracts 0.8.13.
   * Add-on routes and hooks answer HEAD through their GET descriptor,
     preserving status and headers while omitting the response body.
