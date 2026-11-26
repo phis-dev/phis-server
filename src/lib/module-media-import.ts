@@ -2,18 +2,14 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 
-import { createMediaAsset, hasLockedMediaFolder, normalizeFolderPathSegment } from "@/db/media";
+import { hasLockedMediaFolder, normalizeFolderPathSegment } from "@/db/media";
 import {
   ensureSiteMediaConfig,
   ensureSiteMediaSpace,
   getMediaStorageProfile,
-  isMediaStorageProfileWritable,
   isPhiMediaObjectSizeAllowed,
-  PhiMediaLifecycleStatus,
-  reserveMediaSpaceQuota,
 } from "@/db/media-spaces";
 import {
-  commitMediaSpaceBytes,
   deleteSiteModuleMediaFile,
   deleteSiteModuleMediaFolder,
   findMediaFolderByName,
@@ -28,9 +24,8 @@ import {
   writeSiteModuleMediaFolder,
 } from "@/db/site-module-media";
 import { PhisSiteModuleMediaFlag } from "@/lib/constants/media";
-import { PhiServiceProviderUnavailableError } from "@/lib/addons/services";
 import { inspectPhiMediaObject } from "@/lib/media-content-check";
-import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
+import { openSiteMediaWriteStorage, writeSiteMediaAsset } from "@/lib/site-media-write";
 import {
   PHIS_MODULE_MEDIA_FOLDER_NAME_MAX_LENGTH,
   PHIS_MODULE_MEDIA_TEXT_MAX_LENGTH,
@@ -152,7 +147,7 @@ export async function importModuleMediaFile(site: Site, input: PhisModuleMediaFi
    * `putObject` succeeded -- the callback or the COMMIT -- leaves an object no Asset points at, so the
    * cleanup covers the whole transaction.
    */
-  const written: { storage?: { deleteObject(key: string): Promise<unknown> }; key?: string } = {};
+  const written: { discard?: () => Promise<void> } = {};
   try {
   return await withSiteModuleMediaLock(site.id, async (db): Promise<PhisModuleMediaOutcome> => {
     const row = await getSiteModuleMediaFile(db, site.id, packageName, key);
@@ -187,9 +182,8 @@ export async function importModuleMediaFile(site: Site, input: PhisModuleMediaFi
       }
     }
 
-    if (!isMediaStorageProfileWritable(profile)) {
-      return fail("storage_profile_disabled", "The Site Space's Storage Profile is disabled; it takes no new files.");
-    }
+    const opened = await openSiteMediaWriteStorage(site, profile);
+    if ("reason" in opened) return fail(opened.reason, opened.detail);
     const inspection = await inspectPhiMediaObject({
       body: input.body,
       declaredContentType: "application/octet-stream",
@@ -198,51 +192,12 @@ export async function importModuleMediaFile(site: Site, input: PhisModuleMediaFi
     });
     if (!inspection.ok) return fail(inspection.code, inspection.message);
 
-    let storage;
-    try {
-      storage = await createPhisMediaStorageServiceForProfile(profile, site.key);
-    } catch (error) {
-      if (error instanceof PhiServiceProviderUnavailableError) {
-        return fail("storage_provider_unavailable", `The Storage Provider ${profile.providerId} cannot be opened on this Instance: ${error.reason}.`);
-      }
-      throw error;
-    }
-    if (!await reserveMediaSpaceQuota({ spaceId: space.id, bytes: input.body.byteLength }, db)) {
-      return fail("media_quota_exceeded", "The Site Space's quota is used up.");
-    }
-
-    const storageKey = storage.createStorageKey({ siteKey: site.key });
     const originalName = input.originalName.slice(0, PHIS_MODULE_MEDIA_TEXT_MAX_LENGTH);
-    written.storage = storage;
-    written.key = storageKey;
-    const stored = await storage.putObject({
-      storageKey,
-      body: input.body,
-      contentType: inspection.contentType,
-      metadata: { siteKey: site.key, filename: originalName },
+    const asset = await writeSiteMediaAsset(db, {
+      site, space, profile, inspection, folderId, originalName, storage: opened.storage, body: input.body, written,
+      title: input.title, altText: input.alt, meta: { source: "module", package: packageName, key },
     });
-    const asset = await createMediaAsset({
-      siteId: site.id,
-      spaceId: space.id,
-      spaceKind: space.kind,
-      folderId,
-      storageProfileId: profile.id,
-      storageKey: stored.storageKey,
-      originalName,
-      contentType: inspection.contentType,
-      bytes: stored.byteSize,
-      checksumAlgorithm: "sha256",
-      checksumValue: sha256,
-      width: inspection.width,
-      height: inspection.height,
-      blurDataUrl: inspection.blurDataUrl,
-      meta: { source: "module", package: packageName, key },
-      title: input.title,
-      altText: input.alt,
-      lifecycleStatus: PhiMediaLifecycleStatus.Ready,
-    }, db);
-    if (!asset) throw new Error("Failed to persist media asset.");
-    await commitMediaSpaceBytes(db, { spaceId: space.id, bytes: stored.byteSize });
+    if (!asset) return fail("media_quota_exceeded", "The Site Space's quota is used up.");
     await writeSiteModuleMediaFile(db, { siteId: site.id, packageName, key, assetId: asset.id, sourceChecksum: sha256, flags: 0 });
     return replacing !== null
       ? {
@@ -252,7 +207,7 @@ export async function importModuleMediaFile(site: Site, input: PhisModuleMediaFi
       : { kind: "file", packageName, key, status: row ? "repaired" : "created", assetId: asset.id };
   });
   } catch (error) {
-    if (written.storage && written.key) await written.storage.deleteObject(written.key).catch(() => {});
+    await written.discard?.();
     throw error;
   }
 }

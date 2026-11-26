@@ -20,8 +20,9 @@ import {
  * An upload's `finalize` and a Module's media import (design/MODULE_MEDIA.md) put the same question to
  * the bytes: what are they, does the Space accept that, is an SVG safe, is the image one the Asset's
  * columns can describe. `finalize` asks the steps one at a time, because it works from a prefix of a
- * stored object and has a duplicate check between two of them; the import holds the whole file and asks
- * `inspectPhiMediaObject`, which runs the same steps in the same order.
+ * stored object and has a duplicate check between two of them; the imports without an upload session --
+ * a Module's media, a media source's item, `phis media import` (`site-media-write.ts`) -- hold the file, or
+ * its first 64 MiB, and ask `inspectPhiMediaObject`, which runs the same steps in the same order.
  */
 
 /** The largest edge an Asset can record: `media_assets.width`/`height` are SMALLINT. */
@@ -171,14 +172,23 @@ export type PhiMediaObjectInspection =
     message: string;
   };
 
-/** The three steps of `finalize` on a whole object in hand, in `finalize`'s order. */
+/**
+ * The three steps of `finalize` on an object in hand, in `finalize`'s order.
+ *
+ * `body` is the whole object, or -- where `byteLength` says the object is longer, as for a streamed import
+ * past the image decode limit -- the start of it. That start is always longer than the sniffed head and
+ * than the SVG scan limit, so every check is made exactly as on the whole object: the type from the head,
+ * an SVG that long refused, an image that long not decoded.
+ */
 export async function inspectPhiMediaObject(input: {
   body: Buffer;
+  byteLength?: number;
   declaredContentType: string;
   space: Pick<MediaSpaceRecord, "kind">;
   mediaConfig: Pick<SiteMediaConfigRecord, "userSpaceContentKinds" | "groupSpaceContentKinds">;
 }): Promise<PhiMediaObjectInspection> {
   const { body } = input;
+  const byteLength = Math.max(input.byteLength ?? 0, body.byteLength);
   const judged = judgePhiMediaContent(
     body.subarray(0, PHI_MEDIA_SNIFF_HEAD_BYTES),
     input.declaredContentType,
@@ -195,7 +205,7 @@ export async function inspectPhiMediaObject(input: {
   const { contentType } = judged;
 
   if (isSvgContentType(contentType)) {
-    if (body.byteLength > PHI_SVG_SCAN_LIMIT_BYTES) {
+    if (byteLength > PHI_SVG_SCAN_LIMIT_BYTES) {
       return {
         ok: false,
         code: "unsafe_svg_upload",
@@ -207,7 +217,7 @@ export async function inspectPhiMediaObject(input: {
   }
 
   const meta = contentType.trim().toLowerCase().startsWith("image/")
-    && body.byteLength <= PHI_IMAGE_DECODE_LIMIT_BYTES
+    && byteLength <= PHI_IMAGE_DECODE_LIMIT_BYTES
     ? await readImageMetadata(body, contentType)
     : { width: null, height: null, blurDataUrl: null };
   if (isPhiImageTooLarge(meta)) {

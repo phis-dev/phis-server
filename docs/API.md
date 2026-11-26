@@ -8,7 +8,7 @@ public or internal token, and `session` is the visitor's Site session with the a
 passes (see [AUTHORIZATION.md](../AUTHORIZATION.md)). A route with no access entry performs its own checks
 or none; read its source. Request and response shapes are not listed; the source is linked per route.
 
-199 routes.
+201 routes.
 
 ## Contents
 
@@ -24,7 +24,7 @@ or none; read its source. Request and response shapes are not listed; the source
 - [`/api/v1/groups`](#apiv1groups) (3)
 - [`/api/v1/hooks`](#apiv1hooks) (1)
 - [`/api/v1/locales`](#apiv1locales) (1)
-- [`/api/v1/media`](#apiv1media) (2)
+- [`/api/v1/media`](#apiv1media) (4)
 - [`/api/v1/module-media`](#apiv1modulemedia) (4)
 - [`/api/v1/module-products`](#apiv1moduleproducts) (1)
 - [`/api/v1/notifications`](#apiv1notifications) (2)
@@ -366,6 +366,8 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 | Method | Address | Access | Description |
 |---|---|---|---|
 | POST | [`/api/v1/media/checksums/recompute`](../src/app/api/v1/media/checksums/recompute/route.ts) | internal token | Gives Assets stored before this a digest duplicate detection can compare. |
+| POST | [`/api/v1/media/import`](../src/app/api/v1/media/import/route.ts) | internal token | One local file of `phis media import` into the Site Space, as an ordinary Asset. |
+| POST | [`/api/v1/media/import/folder`](../src/app/api/v1/media/import/folder/route.ts) | internal token | The Folder of the Site Space a `phis media import` puts its files into, resolved once before the first. |
 | POST | [`/api/v1/media/storage-policies/reconcile`](../src/app/api/v1/media/storage-policies/reconcile/route.ts) | internal token | Writes every storage's rules from the Site registry: who may write to it, and what it is to clean up. |
 
 ## `/api/v1/module-media`

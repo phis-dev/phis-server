@@ -11,10 +11,13 @@
 export type FlagMap = Map<string, string | boolean>;
 export type ParsedArgv = {
   flags: FlagMap;
+  /** The list flags, each with every value in the order given; a list flag never appears in `flags`. */
+  lists: Map<string, string[]>;
   positionals: string[];
 };
 
-type FlagKind = "string" | "boolean";
+/** `list`: a value flag that may be given more than once, read as every value in the order given. */
+type FlagKind = "string" | "boolean" | "list";
 type FlagSpec = Record<string, FlagKind>;
 
 export const SHORT_FLAG_ALIASES = new Map<string, string>([
@@ -34,6 +37,7 @@ const GLOBAL_FLAGS: FlagSpec = { json: "boolean", root: "string" };
 
 const S = "string" as const;
 const B = "boolean" as const;
+const L = "list" as const;
 
 /**
  * Every command and the flags it reads, keyed by the words that name it.
@@ -205,6 +209,8 @@ export const PHIS_COMMAND_FLAGS: Record<string, FlagSpec> = {
   "operator del": { email: S },
 
   "media check": { fix: B, "prune-staging": B },
+  // Several files are `--file` given once per file.
+  "media import": { site: S, file: L, folder: S, alt: S, title: S, "api-base-url": S },
   "page list": { site: S, area: S },
   "page reset": { site: S, area: S, preset: S, module: S, path: S, force: B, "dry-run": B },
   "translations usage": { "unused-for": S, site: S, examples: S },
@@ -282,6 +288,8 @@ export function resolvePhisCommand(positionals: readonly string[]) {
  * - `--flag value` and `--flag=value` set a string; the value is taken as it is, so `--password -x`,
  *   `--password=-x` and `--value ""` all arrive.
  * - A switch takes no value, and `--force=yes` is refused rather than read as anything.
+ * - A list flag (`--file a --file b`) is the one kind that may be given more than once; it is read from
+ *   `lists`, with every value in the order given.
  * - A flag the command does not read is refused.
  *
  * A line that names no command is parsed by the global flags alone and handed on, so the dispatcher can
@@ -291,6 +299,7 @@ export function parsePhisArgv(argv: readonly string[]): ParsedArgv & { command: 
   const command = resolvePhisCommand(findCommandPositionals(argv));
   const spec: FlagSpec | null = command === null ? null : { ...GLOBAL_FLAGS, ...PHIS_COMMAND_FLAGS[command] };
   const flags: FlagMap = new Map();
+  const lists = new Map<string, string[]>();
   const positionals: string[] = [];
   const label = command === null ? "phis" : `phis ${command}`;
 
@@ -320,6 +329,15 @@ export function parsePhisArgv(argv: readonly string[]): ParsedArgv & { command: 
       }
       continue;
     }
+    if (kind === "list") {
+      const value = token.inline ?? argv[index + 1];
+      if (value === undefined) {
+        throw new Error(`${token.raw} needs a value.`);
+      }
+      if (token.inline === undefined) index += 1;
+      lists.set(token.name, [...(lists.get(token.name) ?? []), value]);
+      continue;
+    }
     // Given twice, one of the two would win without a word: `--currency CHF --currency EUR` probes EUR alone.
     if (flags.has(token.name)) {
       throw new Error(`${label} takes ${token.raw.split("=")[0]} once.`);
@@ -343,5 +361,5 @@ export function parsePhisArgv(argv: readonly string[]): ParsedArgv & { command: 
     index += 1;
   }
 
-  return { command, flags, positionals };
+  return { command, flags, lists, positionals };
 }

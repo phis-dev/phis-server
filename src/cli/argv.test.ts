@@ -42,6 +42,20 @@ describe("the phis command line", () => {
       .toBe("CHF,EUR");
   });
 
+  it("reads a list flag given once per value, in order, and keeps it out of the single-value flags", () => {
+    const parsed = parsePhisArgv([
+      "media", "import", "--site", "s", "--file", "a.png", "--file=-b.png", "--file", "c d.png", "--alt", "A",
+    ]);
+    expect(parsed.command).toBe("media import");
+    expect(parsed.lists.get("file")).toEqual(["a.png", "-b.png", "c d.png"]);
+    expect(parsed.flags.has("file")).toBe(false);
+    expect(parsed.flags.get("alt")).toBe("A");
+    expect(() => parsePhisArgv(["media", "import", "--site", "s", "--file"])).toThrow(/--file needs a value/);
+    expect(() => parsePhisArgv(["media", "import", "--alt", "a", "--alt", "b"])).toThrow(/takes --alt once/);
+    // Elsewhere `--file` is still a single value.
+    expect(() => parsePhisArgv(["payment", "profile", "add", "--file", "a", "--file", "b"])).toThrow(/takes --file once/);
+  });
+
   it("reads a flag by its command, where one name is a switch in one place and a value in another", () => {
     expect(parsePhisArgv(["site", "admin", "--site", "s", "--email", "a@b.test", "--revoke"]).flags.get("revoke"))
       .toBe(true);

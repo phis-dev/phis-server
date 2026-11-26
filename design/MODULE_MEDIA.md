@@ -20,8 +20,12 @@ it for its own presets (MODULES.md, "An icon a preset names is already resolved 
 
 What a Module may ship today does not cover it: Module icons are single-colour drawings, a Theme ground
 is one picture adopted on save, fonts are bundled by Next, and "a Module ships no static files"
-(THIRD_PARTY_MODULES.md). Nothing writes Media from the server side: an Asset comes from a signed-in
-upload, and the CLI has no import.
+(THIRD_PARTY_MODULES.md). When this was written nothing wrote Media from the server side: an Asset came
+from a signed-in upload, and the CLI had no import. Since then the CLI has one without a mapping
+(`phis media import`, docs/CLI.md, 2026-11-26): local files into the Site Space, answered with their Asset
+ids. It writes through the same path as this import (`src/lib/site-media-write.ts`) and remembers no name,
+so it does not replace what follows -- a preset still needs an id that a package name resolves to on every
+Site.
 
 ## 2. The idea
 

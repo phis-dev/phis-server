@@ -18,7 +18,6 @@ import {
 } from "@phis/contracts/media-source";
 
 import {
-  createMediaAsset,
   getMediaAssetBySiteAndChecksum,
   getMediaFolderBySiteAndId,
   hasLockedMediaFolder,
@@ -28,17 +27,13 @@ import {
   ensureSiteMediaConfig,
   ensureSiteMediaSpace,
   getMediaStorageProfile,
-  isMediaStorageProfileWritable,
   isPhiMediaObjectSizeAllowed,
   PhiMediaLifecycleStatus,
-  reserveMediaSpaceQuota,
 } from "@/db/media-spaces";
-import { commitMediaSpaceBytes } from "@/db/site-module-media";
-import { PhiServiceProviderUnavailableError } from "@/lib/addons/services";
 import { PhiMediaKind } from "@/lib/constants/media";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import { inspectPhiMediaObject } from "@/lib/media-content-check";
-import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
+import { openSiteMediaWriteStorage, writeSiteMediaAsset } from "@/lib/site-media-write";
 
 /*
  * Taking a file from somewhere else into the Site's library: `@phis/server/service/media-source`
@@ -487,18 +482,18 @@ export async function importMediaSourceItem(input: {
    * `putObject` succeeded -- the callback or the COMMIT -- leaves an object no Asset points at, so the
    * cleanup covers the whole transaction.
    */
-  const written: { storage?: { deleteObject(key: string): Promise<unknown> }; key?: string } = {};
+  const written: { discard?: () => Promise<void> } = {};
   try {
     return await withMediaSourceImportLock({ spaceId: space.id, checksum: sha256 }, async (db) => {
       // The same lookup the upload's duplicate check makes; here it is the answer, not a refusal.
       const existing = await getMediaAssetBySiteAndChecksum(site.id, space.id, { algorithm: "sha256", value: sha256 });
       if (existing && existing.lifecycleStatus === PhiMediaLifecycleStatus.Ready) return existing;
 
-      if (!isMediaStorageProfileWritable(profile)) {
-        throw new MediaSourceError(
-          "storage_profile_disabled",
-          "Uploads into this Media Space are paused: its Storage Profile is disabled.",
-        );
+      const opened = await openSiteMediaWriteStorage(site, profile);
+      if ("reason" in opened) {
+        throw opened.reason === "storage_profile_disabled"
+          ? new MediaSourceError("storage_profile_disabled", "Uploads into this Media Space are paused: its Storage Profile is disabled.")
+          : new MediaSourceError("storage_provider_unavailable", "Storage is not available on this server.");
       }
       const inspection = await inspectPhiMediaObject({
         body: file.body,
@@ -508,45 +503,11 @@ export async function importMediaSourceItem(input: {
       });
       if (!inspection.ok) throw new MediaSourceError(inspection.code, inspection.message);
 
-      let storage;
-      try {
-        storage = await createPhisMediaStorageServiceForProfile(profile, site.key);
-      } catch (error) {
-        if (error instanceof PhiServiceProviderUnavailableError) {
-          throw new MediaSourceError("storage_provider_unavailable", "Storage is not available on this server.");
-        }
-        throw error;
-      }
-      if (!await reserveMediaSpaceQuota({ spaceId: space.id, bytes: file.body.byteLength }, db)) {
-        throw new MediaSourceError("media_quota_exceeded", "Media Space quota exceeded.");
-      }
-
-      const storageKey = storage.createStorageKey({ siteKey: site.key });
-      written.storage = storage;
-      written.key = storageKey;
-      const stored = await storage.putObject({
-        storageKey,
-        body: file.body,
-        contentType: inspection.contentType,
-        metadata: { siteKey: site.key, filename: file.fileName },
-      });
-      const asset = await createMediaAsset({
-        siteId: site.id,
-        spaceId: space.id,
-        spaceKind: space.kind,
+      const asset = await writeSiteMediaAsset(db, {
+        site, space, profile, inspection, storage: opened.storage, body: file.body, written,
         folderId: input.folderId,
-        createdByUserId: input.actorUserId,
-        updatedByUserId: input.actorUserId,
-        storageProfileId: profile.id,
-        storageKey: stored.storageKey,
+        actorUserId: input.actorUserId,
         originalName: file.fileName,
-        contentType: inspection.contentType,
-        bytes: stored.byteSize,
-        checksumAlgorithm: "sha256",
-        checksumValue: sha256,
-        width: inspection.width,
-        height: inspection.height,
-        blurDataUrl: inspection.blurDataUrl,
         // A record of where it came from, not a link: nothing reads it to find the file again.
         meta: {
           source: "media-source",
@@ -557,14 +518,12 @@ export async function importMediaSourceItem(input: {
         },
         title: file.title,
         altText: file.altText,
-        lifecycleStatus: PhiMediaLifecycleStatus.Ready,
-      }, db);
-      if (!asset) throw new Error("Failed to persist media asset.");
-      await commitMediaSpaceBytes(db, { spaceId: space.id, bytes: stored.byteSize });
+      });
+      if (!asset) throw new MediaSourceError("media_quota_exceeded", "Media Space quota exceeded.");
       return asset;
     });
   } catch (error) {
-    if (written.storage && written.key) await written.storage.deleteObject(written.key).catch(() => {});
+    await written.discard?.();
     throw error;
   }
 }

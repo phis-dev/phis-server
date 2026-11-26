@@ -1434,6 +1434,61 @@ are older than the lifecycle window (one day longer than a session may live): wh
 lifecycle rule removes, and a Local root has no rule for. Younger files are left alone, since their
 session may be being written. `--prune-staging` removes the reported files; without it, findings exit `1`.
 
+### `phis media import --site <site key> --file <path> [--file <path> ...] [--folder <path>|<id>] [--alt <text>] [--title <text>] --api-base-url <url>`
+
+Puts local files into the Site Space of the Site's Media library, each as an ordinary Asset, and answers
+their Asset ids -- for anything that names a picture by id, such as a product made by hand. The files go to
+the serving instance with `api.internalToken`, as `phis addon command`: Core writes them through the
+Storage Service of the Profile the Site Space writes new uploads to, with the checks an upload meets (the
+content sniffed, an unsafe SVG refused, the Site's `max_object_bytes`, the Space's quota). Each Asset is
+`Ready` and delivered as the Site Space delivers, publicly; nothing is mapped to a package
+(`phis module media` is the import with a mapping).
+
+- `--file` names one file and is given once per file; paths are relative to the working directory. Every
+  file is checked first (it exists, is a regular file, is not empty, is not named twice) and nothing is sent
+  while one of them fails. The Asset's name is the file's base name.
+- `--folder` digits are a Folder id of the Site Space; anything else is a path from its root with `/`
+  between the names (`Products/PhiVoice`; `/2026` for a name made of digits). Every missing Folder along the
+  path is made, under the lock the Module media import makes its Folders under, and an existing one is
+  found case-insensitively; nothing is made in a locked Folder and nothing put into one. Without
+  `--folder` the files go to the root.
+- `--alt` and `--title` apply to every file of the call (at most 255 characters each). A text per file is
+  a call per file.
+- Each file is its own import, streamed from the disk with its length stated: Core holds a body of up to
+  64 MiB to check and decode it, and streams a larger one to the Provider, so a file of the Site's limit is
+  never held whole by either side. A file Core refuses does not undo the files before it, and the files
+  after it are still sent. The command exits `1` when any file was refused; the report names each one with
+  its reason (`media_asset_too_large`, `media_quota_exceeded`, `unsafe_svg_upload`, `content_type_not_allowed`,
+  `image_too_large`, `media_folder_locked`, `folder_not_found`, `storage_profile_disabled`, ...). Run it
+  again with the same files: what was imported is answered as `existing`.
+- Bytes already in the Site Space (the same SHA-256) are not written a second time: the answer is
+  `existing` with that Asset's id, and its folder and texts stay as they are.
+
+The text answer is a short table (status, Asset id, file, type, bytes, folder). `--json` prints the array,
+one item per file in the order named: `{ file, status: "created"|"existing"|"refused", assetId, name,
+contentType, bytes, folder: { id, path } | null, reason?, detail? }` (`path` is empty for an existing Asset
+in another Folder than the one asked for).
+
+A product made by hand from the CLI, with its pictures (`@phis/products` takes pictures only: images of at
+most 10 MiB, ready and delivered publicly -- what this import writes into the Site Space):
+
+```bash
+phis media import --site demo --api-base-url http://127.0.0.1:5301 --json \
+  --folder Products/PhiVoice --alt "PhiVoice AI" \
+  --file ./phivoice-icon.png --file ./screen-1.png --file ./screen-2.png
+# [{ "file": "./phivoice-icon.png", "status": "created", "assetId": 812, ... }, { ..., "assetId": 813 }, { ..., "assetId": 814 }]
+
+phis addon command --site demo --as ops@example.test --api-base-url http://127.0.0.1:5301 \
+  --addon @phis/products --command product.add \
+  --input '{"key":"phivoice","title":"PhiVoice AI","picture":812,"gallery":[813,814]}'
+
+phis addon command --site demo --as ops@example.test --api-base-url http://127.0.0.1:5301 \
+  --addon @phis/shop --command listings.add \
+  --input '{"productId":"@phis/products:phivoice","slug":"phivoice","prices":{"CHF":"1800"},"kind":"digital","taxCategory":"digital-goods","status":"draft"}'
+```
+
+`product.drop` gives the pictures up again: Core deletes each one nothing else uses.
+
 ## maintain
 
 ### `phis maintain [--list] [--task <id>] [--dry-run]`

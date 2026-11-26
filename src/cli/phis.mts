@@ -189,6 +189,8 @@ import { PHIS_SITE_PACKAGE_PRODUCT_SUPPLIER } from "@phis/contracts/products";
 import { PhisCdnCheckObjectFlags } from "@phis/contracts/addon";
 import { checkPhiDependencyLicenses } from "./licenses.mts";
 import { checkPhiMediaOwnership, findPhiMediaOrphanedLocalStaging } from "./media-check.mts";
+import { formatMediaImportReport, importMediaFiles, readMediaImportFiles, readMediaImportText } from "./media-import.mts";
+import { parsePhisMediaImportFolder } from "../lib/media-import.ts";
 import { listPhiStoredPages, resetPhiPageToPreset } from "./page.mts";
 import { parsePhiUsageDays, readPhiTranslationUsage } from "./translations-usage.mts";
 import {
@@ -569,6 +571,13 @@ Usage:
   phis operator secret
 
   phis media check [--fix] [--prune-staging]
+  phis media import --site <site key> --file <path> [--file <path> ...] [--folder <path>|<id>]
+                    [--alt <text>] [--title <text>] --api-base-url <Core URL>
+                         Streams local files into the Site Space of the Media library and answers their
+                         Asset ids. --folder: digits are a Folder id, anything else a path from the root
+                         ("Products/PhiVoice"; "/2026" for a name of digits); missing Folders are made.
+                         --alt and --title apply to every file of the call. Bytes already in the library
+                         are answered as their Asset. Exits 1 when Core refused any file.
   phis page list --site <site key> [--area <area>]
   phis page reset --site <site key> --area <area> (--preset <preset key> [--module <module id>] | --path <path>) [--force] [--dry-run]
   phis translations usage [--unused-for <days, e.g. 90d>] [--site <site key>] [--examples <n>]
@@ -3890,6 +3899,35 @@ async function main() {
     }
     if (stores.some((store) => !store.trackedSince)) {
       console.log("A store tracked for fewer days than asked about reads as unread; nothing is deleted by this.");
+    }
+    return;
+  }
+
+  if (group === "media" && command === "import") {
+    /*
+     * Posted to the serving instance, as `addon command` is: the Storage Service lives there. Every file
+     * is checked here first; then the Folder is resolved once and each file streamed as its own import.
+     */
+    const siteKey = getRequiredFlag(flags, "site").toLowerCase();
+    const files = readMediaImportFiles(parsed.lists.get("file") ?? []);
+    const folderFlag = getOptionalFlag(flags, "folder");
+    const folder = folderFlag ? parsePhisMediaImportFolder(folderFlag) : null;
+    const alt = readMediaImportText(getOptionalFlag(flags, "alt"), "alt");
+    const title = readMediaImportText(getOptionalFlag(flags, "title"), "title");
+    const apiBaseUrl = readApiBaseUrlFlag(flags, "media import");
+    const internalToken = readCliMergedConfig().api?.internalToken?.trim() ?? "";
+    if (!internalToken) {
+      throw new Error("Missing api.internalToken; an import is run through the serving instance.");
+    }
+    const report = await importMediaFiles({ apiBaseUrl, internalToken, siteKey }, { files, folder, alt, title });
+    if (json) {
+      printJson(report.items);
+    } else {
+      console.log(formatMediaImportReport(report));
+    }
+    if (report.refused > 0) {
+      if (!json) console.error(`${report.refused} of ${report.items.length} file(s) were refused by Core; the others are imported.`);
+      process.exitCode = 1;
     }
     return;
   }
