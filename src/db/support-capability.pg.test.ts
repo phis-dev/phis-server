@@ -5,7 +5,7 @@ import {
   PhisSupportTicketTypeFlag,
 } from "@phis/contracts/support";
 import { PhisResourceLinkFlag } from "@phis/contracts/resource-links";
-import { PhisSiteThreadKindFlag } from "@phis/contracts/threads";
+import { PhisSiteThreadKindFlag, PhisThreadMessageFlag } from "@phis/contracts/threads";
 
 import {
   addPhiTestGroupMember,
@@ -194,6 +194,41 @@ describe.skipIf(!configured)("support capability", () => {
 
     const own = await actorless().create({ typeKey: "request", subject: "from outside", message: "m" });
     expect(await actorless().get(own.id)).not.toBeNull();
+  });
+
+  it("keeps the language an integration declared for the opening message, and opens nothing on an unknown one", async () => {
+    const pool = await requirePhiTestDatabase();
+    const openingMessage = async (threadId: number) => (await pool.query<{ source_lang: string | null; flags: number }>(
+      `SELECT source_lang, flags FROM phis.thread_messages WHERE thread_id = $1 ORDER BY id ASC LIMIT 1`,
+      [threadId],
+    )).rows[0]!;
+    const ticketCount = async () => (await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM phis.support_tickets WHERE site_id = $1`,
+      [site.id],
+    )).rows[0]!.n;
+
+    // Stored as the key resolves, and as a declaration: no `LangDetected`.
+    const declared = await actorless().create({
+      typeKey: "request", subject: "Sprache", message: "Hallo.", messageSourceLang: "de_de",
+    });
+    const written = await openingMessage(declared.threadId);
+    expect(written.source_lang).toBe("de-DE");
+    expect(written.flags & PhisThreadMessageFlag.LangDetected).toBe(0);
+
+    // Absent, null and empty all declare nothing.
+    for (const messageSourceLang of [undefined, null, ""]) {
+      const undeclared = await actorless().create({
+        typeKey: "request", subject: "undeclared", message: "m", messageSourceLang,
+      });
+      expect((await openingMessage(undeclared.threadId)).source_lang).toBeNull();
+    }
+
+    // A key the platform does not know is refused, not stored as nothing -- and no ticket is left behind.
+    const before = await ticketCount();
+    await expect(actorless().create({
+      typeKey: "request", subject: "s", message: "m", messageSourceLang: "xx",
+    })).rejects.toThrow(/Unknown message language/u);
+    expect(await ticketCount()).toBe(before);
   });
 
   it("refuses a type or a queue this Site does not have", async () => {

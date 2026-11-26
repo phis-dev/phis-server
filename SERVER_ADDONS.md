@@ -1722,6 +1722,14 @@ Support work depends on the type's close policy and on the other tasks -- which 
 see all of. A type and a queue are named by key rather than by id, because an id means nothing in an
 Add-on's configuration; a key that names nothing is refused rather than quietly routed elsewhere.
 
+**The opening message's language.** `create` takes `messageSourceLang`, on the terms of `threads:v1`
+`create` (design/THREADS.md section 14): the language the ticket's first message is written in, where the
+integration knows it -- a mail header, the locale of the page a form came from. A locale key of the
+platform capability table, stored as it resolves (`zh-CN` as `zh-Hans`) and without `LangDetected`, and
+never replaced by a language a translation recognises later. Absent, `null` or empty declares nothing, and
+the first translation fills it in flagged `LangDetected`; any other key the table does not know is refused,
+and no ticket is opened. `@phis/github` leaves it out, because an issue states no language.
+
 ### `products:v1`
 
 What a Site has that somebody can hold. A product in Core is an identity -- who supplies it, what it is

@@ -832,7 +832,8 @@ does not leave.
 **An integration writes it, because an integration already knows.** A mail header, the locale of the
 page a form was submitted from, the browser language a chat widget saw -- these are facts that arrive
 with the message and are lost if there is nowhere to put them. Its write path is `messageSourceLang` on
-the threads capability's `create` and `reply`.
+the threads capability's `create` and `reply`, and on the support capability's `create`, which opens the
+ticket's thread with it -- validated and stored on the same terms, so an unknown key opens no ticket.
 
 **A translation fills it too, and says that it did.** The language a provider recognised comes back as a
 field on a translation that was paid for anyway, so throwing it away would have left the column empty for

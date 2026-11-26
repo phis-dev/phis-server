@@ -167,7 +167,7 @@ export function buildPhisAddonSupportCapability(input: {
       return asTicket(ticket);
     },
 
-    async create({ typeKey, queueKey, subject, message, externalRef }) {
+    async create({ typeKey, queueKey, subject, message, messageSourceLang, externalRef }) {
       requireBelievableCaller("create");
       const typeId = await getSupportTicketTypeIdByKey(siteId, typeKey);
       if (typeId == null) {
@@ -197,6 +197,9 @@ export function buildPhisAddonSupportCapability(input: {
         queueId,
         subject,
         message,
+        // Normalized where `threads:v1` has it normalized, as the thread's first message is written: an
+        // unknown key throws inside the ticket's transaction, so a refused language opens nothing.
+        messageSourceLang: messageSourceLang ?? null,
         channel: SUPPORT_TICKET_CHANNEL_API,
         // The same rule as `threads.create`: with nobody behind the call the ticket is the Add-on's own,
         // which is what lets it read work arriving from outside back. Opened for a person, it is that
