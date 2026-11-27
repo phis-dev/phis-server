@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { PhisProductFlag } from "@phis/contracts/products";
 
 import {
   PhisSitePackageProductFlag,
@@ -131,10 +132,10 @@ describe("what product.add is handed", () => {
       flags: PhisSitePackageProductFlag.AccountRequired, picture: "app-icon", gallery: ["shot-2", "shot-1"],
     }, { picture: 41, icon: null, gallery: [43, 42] })).toEqual({
       key: "acme.site.pro", sourceLocale: "fr", title: "Pro", summary: "All", description: "Long", kind: "app", state: "active",
-      counted: false, accountRequired: true, picture: 41, gallery: [43, 42],
+      flags: PhisProductFlag.AccountRequired, picture: 41, gallery: [43, 42],
     });
     expect(buildModuleProductCommandInput("acme.site.basic", { key: "basic", sourceLocale: "en", title: "Basic", flags: PhisSitePackageProductFlag.Counted }, { picture: null, icon: 7, gallery: [] }))
-      .toEqual({ key: "acme.site.basic", sourceLocale: "en", title: "Basic", counted: true, accountRequired: false, icon: 7 });
+      .toEqual({ key: "acme.site.basic", sourceLocale: "en", title: "Basic", flags: PhisProductFlag.Counted, icon: 7 });
     // The button goes along as the proposal reader took it.
     const link = { target: { kind: "external" as const, href: "https://apps.apple.com/app/id1" }, label: "Get it" };
     expect(buildModuleProductCommandInput("acme.site.app", { key: "app", sourceLocale: "en", title: "App", link }, { picture: null, icon: null, gallery: [] }))

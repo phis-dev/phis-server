@@ -1895,7 +1895,9 @@ at runtime it registers through `register`.
 under `phis.products` in its `package.json`: `[{ key, title, summary?, description?, link?, kind?, state?: draft|active,
 flags?, picture?, icon?, gallery? }]` (`PhisSitePackageProductProposal`, read by `readPhisSitePackageProductProposals` in
 `@phis/contracts/products`), which is what `@phis/products`' command `product.add` takes, the two yes-or-no
-answers as `PhisSitePackageProductFlag` bits (`Counted` 1, `AccountRequired` 2), `picture`/`icon` as the key
+answers as `PhisSitePackageProductFlag` bits (`Counted` 1, `AccountRequired` 2) -- handed to `product.add` as the
+product's own `flags` (`PhisProductFlag`, same bits, same type as Core's; `product.add` refuses the old
+`counted`/`accountRequired` keys) --, `picture`/`icon` as the key
 of one of the package's own `phis.media.files`, `gallery` as a list of such keys in order, and `link` as
 `PhisProductLinkDraft` -- a Module Page of the package or an https address, since a package knows no Page of
 the Site; the proposal reader refuses a label without a target -- which Core hands to `product.add` as it is. They are not a supplier's manifest products: Core does not

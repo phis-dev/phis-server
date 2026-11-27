@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { PhisProductFlag } from "@phis/contracts/products";
 
 /*
  * Taking a Site package's proposed products against the development database: once per Site and proposal,
@@ -78,7 +79,7 @@ describe("taking proposed products against PostgreSQL", () => {
       commandId: "product.add",
       site: ref(site),
       actorUserId: actor,
-      input: { key: "pgtest.site.pro", sourceLocale: "en", title: "Pro", kind: "app", state: "active", counted: false, accountRequired: true },
+      input: { key: "pgtest.site.pro", sourceLocale: "en", title: "Pro", kind: "app", state: "active", flags: PhisProductFlag.AccountRequired },
     });
     expect(await rows()).toEqual([expect.objectContaining({ packageName: PKG, key: "pro", productKey: "pgtest.site.pro", flags: 0 })]);
 
@@ -117,7 +118,7 @@ describe("taking proposed products against PostgreSQL", () => {
     );
     const created = await applyModuleProductProposal(ref(site), { packageName: PKG, proposal, actorUserId: actor });
     expect(created.status).toBe("created");
-    expect(commands.run.mock.calls[0]?.[0].input).toEqual({ key: "pgtest.site.pictured", sourceLocale: "en", title: "Pictured", counted: false, accountRequired: false, picture: assetId });
+    expect(commands.run.mock.calls[0]?.[0].input).toEqual({ key: "pgtest.site.pictured", sourceLocale: "en", title: "Pictured", flags: 0, picture: assetId });
   });
 
   it("waits until every picture of the gallery is in the library, then hands their Asset ids over in order", async () => {
@@ -137,7 +138,7 @@ describe("taking proposed products against PostgreSQL", () => {
     const b = await asset("shot-b");
     expect((await applyModuleProductProposal(ref(site), { packageName: PKG, proposal, actorUserId: actor })).status).toBe("created");
     expect(commands.run.mock.calls[0]?.[0].input).toEqual({
-      key: "pgtest.site.galleried", sourceLocale: "en", title: "Galleried", description: "## Long", counted: false, accountRequired: false, gallery: [b, a],
+      key: "pgtest.site.galleried", sourceLocale: "en", title: "Galleried", description: "## Long", flags: 0, gallery: [b, a],
     });
   });
 

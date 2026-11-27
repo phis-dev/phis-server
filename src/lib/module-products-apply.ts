@@ -2,6 +2,7 @@ import "server-only";
 
 import {
   PHIS_SITE_PACKAGE_PRODUCT_SUPPLIER,
+  PhisProductFlag,
   PhisSitePackageProductFlag,
   phisSitePackageProductKey,
   type PhisSitePackageProductProposal,
@@ -52,8 +53,10 @@ type Site = { id: number; key: string; publicBaseUrl: string; timeZone: string }
 
 /**
  * The body `product.add` is handed for a proposal:
- * `{ key, sourceLocale, title, summary?, description?, link?, kind?, state?, counted?, accountRequired?, picture?, icon?, gallery? }`,
+ * `{ key, sourceLocale, title, summary?, description?, link?, kind?, state?, flags, picture?, icon?, gallery? }`,
  * `sourceLocale` the package's language, which always wins over the Site's (`@phis/contracts/products`).
+ * `flags` is `PhisProductFlag`, the product's own property in Core's type (owner, 2026-11-27): the
+ * proposal's `Counted` and `AccountRequired`, whose bits are the same, and nothing else.
  */
 export function buildModuleProductCommandInput(
   productKey: string,
@@ -71,8 +74,8 @@ export function buildModuleProductCommandInput(
     ...(proposal.link !== undefined ? { link: proposal.link } : {}),
     ...(proposal.kind !== undefined ? { kind: proposal.kind } : {}),
     ...(proposal.state !== undefined ? { state: proposal.state } : {}),
-    counted: (flags & PhisSitePackageProductFlag.Counted) !== 0,
-    accountRequired: (flags & PhisSitePackageProductFlag.AccountRequired) !== 0,
+    flags: (flags & PhisSitePackageProductFlag.Counted ? PhisProductFlag.Counted : 0)
+      | (flags & PhisSitePackageProductFlag.AccountRequired ? PhisProductFlag.AccountRequired : 0),
     ...(pictures.picture !== null ? { picture: pictures.picture } : {}),
     ...(pictures.icon !== null ? { icon: pictures.icon } : {}),
     ...(pictures.gallery.length > 0 ? { gallery: [...pictures.gallery] } : {}),

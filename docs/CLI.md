@@ -835,7 +835,8 @@ Module selection holding one of its Modules -- as that admin.
 - `title` (required, at most 200), `summary` (at most 1000) and `description` (Markdown, at most 20000), in the
   package's `sourceLocale`; `kind` (a
   lower-case word or words joined by dashes, `product` where none is said); `state` `draft` (the default) or
-  `active`; `flags` the bits of `PhisSitePackageProductFlag` (`Counted` 1, `AccountRequired` 2).
+  `active`; `flags` the bits of `PhisSitePackageProductFlag` (`Counted` 1, `AccountRequired` 2), which Core hands
+  `product.add` as the product's own `flags` (`PhisProductFlag`, the same two bits), never as booleans.
 - `picture` and `icon` name one of the package's own `phis.media.files` by its key, `gallery` a list of such
   keys in order (at most 20, none twice). Core hands `product.add` the Asset each name stands for on the Site,
   so the media are imported first (`phis module media sync`, which `update` runs before); a proposal waits
