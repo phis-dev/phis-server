@@ -23,8 +23,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const series = document.seriesId ? await readPhisBillingSeries(getPool(), context.site.id, document.seriesId) : null;
   return NextResponse.json({
     document: document.record,
-    corrections: corrections.map(entry => phisBillingListFields(entry.record)),
-    corrected: corrected ? phisBillingListFields(corrected.record) : null,
+    corrections: corrections.map(entry => phisBillingListFields(entry.record, document.record.number)),
+    corrected: corrected ? phisBillingListFields(corrected.record, null) : null,
     series: series ? { id: series.id, key: series.key, label: series.label, template: series.template } : null,
     voidReason: document.voidReason,
   });

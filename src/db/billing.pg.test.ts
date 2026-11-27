@@ -11,6 +11,7 @@ import {
   openPhisBillingDocument, phisProviderDocumentCollector, previewPhisBillingSeries, removeExpiredPhisBillingDocuments, retryPhisProviderDocument,
   setPhisBillingPaymentState, verifyPhisBillingOpen, voidIncompletePhisBillingDocuments, voidPhisBillingDocument, type PhisBillingActor,
 } from "@/lib/billing/documents";
+import { phisBillingListRows } from "@/lib/billing/routes";
 import { readPhisBillingFile } from "@/lib/billing/store";
 import { PhisBillingError } from "@/lib/billing/validation";
 import { getPhisConfigSync } from "@/lib/config";
@@ -185,6 +186,18 @@ describe("billing:v1 documents and number series", () => {
       expect(await refusal(issue({ kind: "reminder" }))).toBe("invalid_input");
       expect(await refusal(issue({ kind: "invoice", correctsId: invoice.id }))).toBe("invalid_input");
       expect((await issue({ kind: "reminder", correctsId: invoice.id })).correctsId).toBe(invoice.id);
+    });
+
+    it("answers list rows with the due date and the corrected invoice's number, never the content", async () => {
+      const dueAt = "2026-07-01T00:00:00.000Z";
+      const invoice = await issue({ content: billingContent({ payment: { dueAt, reference: null, iban: "CH9300762011623852957", swissQr: null } }) as PhisBillingDocumentIssueInput["content"] });
+      const reminder = await issue({ kind: "reminder", correctsId: invoice.id,
+        content: billingContent({ payment: { dueAt: "2026-07-15T00:00:00.000Z", reference: null, iban: null, swissQr: null } }) as PhisBillingDocumentIssueInput["content"] });
+      const receipt = await issue({ kind: "receipt", series: undefined, file: "none" });
+      const rows = await phisBillingListRows(site.id, [invoice, reminder, receipt]);
+      expect(rows.map(row => [row.id, row.dueAt, row.correctsNumber])).toEqual([
+        [invoice.id, dueAt, null], [reminder.id, "2026-07-15T00:00:00.000Z", invoice.number], [receipt.id, null, null]]);
+      expect(rows.every(row => !("content" in row))).toBe(true);
     });
   });
 

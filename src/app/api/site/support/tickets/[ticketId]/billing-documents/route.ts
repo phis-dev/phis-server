@@ -5,7 +5,7 @@ import { supportTicketWithinReach } from "@/db/support";
 import { PHI_CORE_ROLE_PROVIDER_ID, PhiBaseRole } from "@/lib/authorization";
 import { getPool } from "@/lib/db";
 import { resolveSiteRoleApiContext } from "@/lib/guards/site-admin-api";
-import { decodePhisBillingCursor, encodePhisBillingCursor, phisBillingErrorResponse, phisBillingListFields, readPhisBillingLimitParam } from "@/lib/billing/routes";
+import { decodePhisBillingCursor, encodePhisBillingCursor, phisBillingErrorResponse, phisBillingListRows, readPhisBillingLimitParam } from "@/lib/billing/routes";
 import { parseStrictPositiveInt } from "@/lib/helpers/request";
 import { readSupportTicketReach } from "@/lib/support-reach";
 
@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * The billing documents of a support ticket's requester, for a Supporter (and the Admin) who may work on
- * the ticket, while it is open (before Resolved): `{ documents, cursor }`, list fields only -- no content and
+ * the ticket, while it is open (before Resolved): `{ documents, cursor }`, list rows only (with `dueAt` and `correctsNumber`) -- no content and
  * no file to open (owner, 2026-11-27). A Maintainer is refused: the Site access `support` admits one, the
  * documents do not.
  */
@@ -38,7 +38,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const query = request.nextUrl.searchParams;
     const page = await listPhisBillingDocuments(getPool(), { siteId: context.site.id, subjectId },
       { cursor: decodePhisBillingCursor(query.get("cursor")), limit: readPhisBillingLimitParam(query.get("limit")) });
-    return NextResponse.json({ documents: page.documents.map(document => phisBillingListFields(document.record)), cursor: encodePhisBillingCursor(page.next) });
+    return NextResponse.json({ documents: await phisBillingListRows(context.site.id, page.documents.map(document => document.record)), cursor: encodePhisBillingCursor(page.next) });
   } catch (failure) {
     return phisBillingErrorResponse(failure);
   }

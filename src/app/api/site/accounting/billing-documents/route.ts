@@ -6,7 +6,7 @@ import { findPhisBillingSubjectOfUser, listPhisBillingDocuments } from "@/db/bil
 import { getPool } from "@/lib/db";
 import { requireSiteBillingApiContext } from "@/lib/guards/site-admin-api";
 import {
-  decodePhisBillingCursor, encodePhisBillingCursor, phisBillingErrorResponse, phisBillingListFields, readPhisBillingKindsParam, readPhisBillingLimitParam,
+  decodePhisBillingCursor, encodePhisBillingCursor, phisBillingErrorResponse, phisBillingListRows, readPhisBillingKindsParam, readPhisBillingLimitParam,
 } from "@/lib/billing/routes";
 import { PHIS_BILLING_PAYMENT_STATES, PhisBillingError, readPhisBillingInstant } from "@/lib/billing/validation";
 import { parseStrictPositiveInt } from "@/lib/helpers/request";
@@ -20,7 +20,8 @@ const STATUSES: readonly PhisBillingDocument["status"][] = ["pending", "availabl
  * Accountant only (never a Maintainer). Query: `userId` (the person, turned into their subject here),
  * `issuerKind` (`merchant` | `provider`), `issuer` (name, contains), `kinds`, `source` and `consumer` (Add-on
  * ids), `from` and `to` (issued, ISO instants), `status` (comma-separated), `paymentState`, `q` (number,
- * reference or label, contains), `cursor`, `limit`. Answers `{ documents, cursor }` without contents.
+ * reference or label, contains), `cursor`, `limit`. Answers `{ documents, cursor }` as list rows:
+ * without contents, with `dueAt` and `correctsNumber` as the person's own list has them.
  */
 export async function GET(request: NextRequest) {
   const { context, error } = await requireSiteBillingApiContext(request);
@@ -55,7 +56,7 @@ export async function GET(request: NextRequest) {
       paymentState: paymentState as PhisBillingPaymentState | null,
       search: query.get("q")?.slice(0, 100) || null,
     }, { cursor: decodePhisBillingCursor(query.get("cursor")), limit: readPhisBillingLimitParam(query.get("limit")) });
-    return NextResponse.json({ documents: page.documents.map(document => phisBillingListFields(document.record)), cursor: encodePhisBillingCursor(page.next) });
+    return NextResponse.json({ documents: await phisBillingListRows(context.site.id, page.documents.map(document => document.record)), cursor: encodePhisBillingCursor(page.next) });
   } catch (failure) {
     return phisBillingErrorResponse(failure);
   }

@@ -3,6 +3,9 @@ import "server-only";
 import { NextResponse } from "next/server";
 import type { PhisBillingDocument, PhisBillingDocumentKind } from "@phis/contracts/billing";
 
+import { readPhisBillingDocumentNumbers } from "@/db/billing.mts";
+import { getPool } from "@/lib/db";
+
 import { PhisBillingError } from "./validation.ts";
 import { PHIS_BILLING_KINDS } from "./validation.ts";
 
@@ -16,10 +19,22 @@ export function phisBillingErrorResponse(error: unknown) {
   throw error;
 }
 
-/** A document without its structured content: what a list shows, and all a Supporter sees. */
-export function phisBillingListFields(document: PhisBillingDocument): Omit<PhisBillingDocument, "content"> {
-  const { content: _content, ...fields } = document;
-  return fields;
+/**
+ * A list row: a document without its structured content (all a Supporter sees), with what a row shows of
+ * the content -- `dueAt`, the due date of a merchant's invoice or reminder (`content.payment.dueAt`, else
+ * null) -- and `correctsNumber`, the number of the invoice a credit note or reminder refers to (else null).
+ */
+export type PhisBillingListRow = Omit<PhisBillingDocument, "content"> & { dueAt: string | null; correctsNumber: string | null };
+
+export function phisBillingListFields(document: PhisBillingDocument, correctsNumber: string | null = null): PhisBillingListRow {
+  const { content, ...fields } = document;
+  return { ...fields, dueAt: content?.payment?.dueAt ?? null, correctsNumber };
+}
+
+/** List rows for a page of documents, the corrected invoices' numbers read in one statement. */
+export async function phisBillingListRows(siteId: number, documents: readonly PhisBillingDocument[]): Promise<PhisBillingListRow[]> {
+  const numbers = await readPhisBillingDocumentNumbers(getPool(), siteId, documents.flatMap(document => document.correctsId ? [document.correctsId] : []));
+  return documents.map(document => phisBillingListFields(document, document.correctsId ? numbers.get(document.correctsId) ?? null : null));
 }
 
 /** `kinds=invoice,receipt` as a list; `null` for none given. */

@@ -414,3 +414,11 @@ export async function listPendingPhisProviderBillingDocumentIds(db: Db, siteId: 
     AND refund_id IS NOT DISTINCT FROM $3::uuid AND source_kind = 'provider' AND status = 'pending' FOR UPDATE`, [siteId, paymentId, refundId]);
   return rows.map(row => row.id);
 }
+
+/** The numbers of documents of a Site by id, for list rows that name the invoice a credit note or reminder refers to. */
+export async function readPhisBillingDocumentNumbers(db: Db, siteId: number, ids: readonly string[]): Promise<Map<string, string | null>> {
+  if (ids.length === 0) return new Map();
+  const { rows } = await db.query<{ id: string; number: string | null }>(
+    "SELECT id::text, number FROM phis.billing_documents WHERE site_id = $1 AND id = ANY($2::uuid[])", [siteId, [...new Set(ids)]]);
+  return new Map(rows.map(row => [row.id, row.number]));
+}
