@@ -360,12 +360,23 @@ export async function removeUserAccountSiteMembership(userId: number, siteId: nu
 }
 
 export async function deleteUserAccount(userId: number) {
-  const pool = getPool();
-  const { rows } = await pool.query<{ id: number }>(
-    `DELETE FROM phis.user_accounts
-     WHERE id = $1
-     RETURNING id`,
-    [userId],
-  );
-  return rows[0] ?? null;
+  return withTransaction(async (client) => {
+    /*
+     * The person's billing documents are kept for their retention (billing:v1): detached -- their subject
+     * gone with the account, `Detached` set -- in the same transaction, so none is ever left owned by nobody
+     * without saying so.
+     */
+    await client.query(
+      `UPDATE phis.billing_documents SET subject_id = NULL, flags = flags | 4, version = version + 1, updated_at = NOW()
+       WHERE subject_id IN (SELECT id FROM phis.entitlement_subjects WHERE user_id = $1)`,
+      [userId],
+    );
+    const { rows } = await client.query<{ id: number }>(
+      `DELETE FROM phis.user_accounts
+       WHERE id = $1
+       RETURNING id`,
+      [userId],
+    );
+    return rows[0] ?? null;
+  });
 }

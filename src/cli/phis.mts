@@ -165,6 +165,8 @@ import {
   type PhisPaymentReprobe,
 } from "./payments.mts";
 import { runPhisEntitlementCommand } from "./entitlements.mts";
+import { PHIS_BILLING_USAGE, runPhisBillingCommand } from "./billing.mts";
+import { setPhisBillingStorageQuota } from "../db/billing.mts";
 import { runPhisAddonUsersCommand } from "./users.mts";
 import { listUserListenersOf } from "../lib/addons/commerce-listeners.ts";
 import { PHIS_USERS_ACCESS_LOG_MAX_DAYS } from "../lib/constants/users.ts";
@@ -437,7 +439,7 @@ Usage:
                 --source-locale <locale> --default-locale <locale> [--available-locales <csv>]
                 --support-email|-e <email> [--time-zone <iana zone>]
   phis site set --key|-k <site key> [--name|-n <site name>] [--hostname|-h <hostname>] [--public-base-url|-u <url>] [--support-email|-e <email>] [--time-zone <iana zone>]
-                 [--users-access-log-days <1-3650>]
+                 [--users-access-log-days <1-3650>] [--billing-quota-bytes <n|none>] [--billing-quota-objects <n|none>]
   phis site enable --key|-k <site key>
   phis site disable --key|-k <site key>
   phis site del --key|-k <site key>
@@ -552,6 +554,8 @@ Usage:
   phis entitlement grant  --site <site key> --user <user id> --product <product id> --reference <text>
                           [--ends <ISO instant>] [--quantity <n>]
   phis entitlement revoke --site <site key> --product <product id> --reference <text>
+
+${PHIS_BILLING_USAGE.replace(/^Use:\n/u, "")}
 
   phis secret init-key
   phis secret set   --name <name> [--site <site key>] [--addon <@scope/name>] [--value <value>]   (value from stdin without --value)
@@ -2696,9 +2700,21 @@ async function updateSiteFields(flags: FlagMap, json: boolean) {
   }
   const usersAccessLogDays = accessLogFlag === undefined ? undefined : Number(accessLogFlag);
 
-  if (!name && !supportEmail && !hostname && !publicBaseUrl && !timeZone && usersAccessLogDays === undefined) {
+  // Core's private billing store has a ceiling of its own; `none` lifts it.
+  const readQuota = (key: "billing-quota-bytes" | "billing-quota-objects") => {
+    const raw = getOptionalFlag(flags, key);
+    if (raw === undefined) return undefined;
+    if (raw === "none") return null;
+    if (!/^\d{1,15}$/.test(raw)) throw new Error(`--${key} is a whole number, or none.`);
+    return Number(raw);
+  };
+  const billingQuotaBytes = readQuota("billing-quota-bytes");
+  const billingQuotaObjects = readQuota("billing-quota-objects");
+
+  if (!name && !supportEmail && !hostname && !publicBaseUrl && !timeZone && usersAccessLogDays === undefined
+    && billingQuotaBytes === undefined && billingQuotaObjects === undefined) {
     throw new Error(
-      "Nothing to set. Provide at least --name, --hostname, --public-base-url, --support-email, --time-zone, or --users-access-log-days.",
+      "Nothing to set. Provide at least --name, --hostname, --public-base-url, --support-email, --time-zone, --users-access-log-days, --billing-quota-bytes or --billing-quota-objects.",
     );
   }
 
@@ -2725,6 +2741,9 @@ async function updateSiteFields(flags: FlagMap, json: boolean) {
   });
   if (!updated) {
     throw new Error(`Site ${siteKey} does not exist.`);
+  }
+  if (billingQuotaBytes !== undefined || billingQuotaObjects !== undefined) {
+    await setPhisBillingStorageQuota(getPool(), updated.id, { bytes: billingQuotaBytes, objects: billingQuotaObjects });
   }
 
   if (json) {
@@ -4038,6 +4057,13 @@ async function main() {
   if (group === "product") {
     const result = await runPhisProductCommand(configRoot, getPool(), [command ?? "", ...remaining], flags);
     if (json) printJson({ ok: true, action: `product.${[command, ...remaining].filter(Boolean).join(".")}`, ...result.data });
+    else for (const line of result.lines) console.log(line);
+    return;
+  }
+
+  if (group === "billing") {
+    const result = await runPhisBillingCommand(configRoot, getPool(), [command ?? "", ...remaining], flags);
+    if (json) printJson({ ok: true, action: `billing.${[command, ...remaining].filter(Boolean).join(".")}`, ...result.data });
     else for (const line of result.lines) console.log(line);
     return;
   }

@@ -108,6 +108,13 @@ async function invokeEventHandler(input: {
       const { productId } = input.row.payload;
       if (input.row.subjectKind !== "product" || typeof productId !== "string" || !productId.startsWith("@")) throw new Error("Invalid product outbox subject.");
       await timed(input.handler({ ...common, event: input.event, subject: { kind: "product", productId: productId as `@${string}/${string}:${string}` } }));
+    } else if (input.event === "billing-document.changed") {
+      // No state travels: the handler reads the document through `billing:v1`.
+      const { documentId, reference, version } = input.row.payload;
+      if (input.row.subjectKind !== "billing-document" || typeof documentId !== "string" || typeof reference !== "string" || !Number.isInteger(version)) {
+        throw new Error("Invalid billing document outbox subject.");
+      }
+      await timed(input.handler({ ...common, event: input.event, subject: { kind: "billing-document", documentId, reference, version: version as number } }));
     } else if (input.event === "user.registered" || input.event === "user.changed") {
       // Facts only, never a value: the handler reads what it may through `users:v1`.
       const { subject, fields } = input.row.payload;

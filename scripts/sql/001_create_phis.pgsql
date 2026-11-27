@@ -2901,7 +2901,8 @@ CREATE TABLE IF NOT EXISTS phis.addon_event_outbox (
   CONSTRAINT addon_event_outbox_event_check CHECK (event <> ''),
   CONSTRAINT addon_event_outbox_hop_check CHECK (hop >= 0),
   CONSTRAINT addon_event_outbox_subject_check CHECK (
-    (subject_kind = 'thread' AND thread_id IS NOT NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event NOT IN ('payment.changed', 'entitlement.changed', 'product.changed', 'asset.changed', 'user.registered', 'user.changed') AND event NOT LIKE '@%') OR
+    (subject_kind = 'thread' AND thread_id IS NOT NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event NOT IN ('payment.changed', 'entitlement.changed', 'product.changed', 'asset.changed', 'user.registered', 'user.changed', 'billing-document.changed') AND event NOT LIKE '@%') OR
+    (subject_kind = 'billing-document' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event = 'billing-document.changed') OR
     (subject_kind = 'user' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event IN ('user.registered', 'user.changed')) OR
     (subject_kind = 'entitlement' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event = 'entitlement.changed') OR
     (subject_kind = 'asset' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event = 'asset.changed') OR
@@ -3497,4 +3498,135 @@ CREATE TABLE IF NOT EXISTS phis.notification_opt_outs (
     FOREIGN KEY (user_id, site_id)
     REFERENCES phis.user_site_memberships (user_id, site_id)
     ON DELETE CASCADE
+);
+
+-- Billing documents (`billing:v1`, PAYMENTS.md, billing documents): every invoice, receipt, credit note,
+-- reminder and confirmation of a Site, the Provider's (fetched after a capture or a succeeded refund) and
+-- those an Add-on issues. Immutable once issued: kind, number, issuer, content, subject, reference and the
+-- links never change; only the file (once), `status`, `payment_state`, `flags` (1 = Voided, 2 = Credited,
+-- 4 = Detached) and `version` move. `subject_id` goes to NULL with `Detached` when the person asks to be
+-- deleted; the row and its file stay until `retain_until` (end of the issue year plus ten years). The file
+-- lives in Core's private store on the Site's Storage Provider under `storage_key`, never in the Media
+-- library. Numbers of issued invoices, credit notes and reminders come from `billing_number_series`.
+-- kinds of a source or a series, as bits: 1 = invoice, 2 = credit-note, 4 = reminder, 8 = receipt, 16 = confirmation.
+CREATE TABLE IF NOT EXISTS phis.billing_document_sources (
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  addon_id VARCHAR(255) NOT NULL,
+  kinds SMALLINT NOT NULL CHECK (kinds BETWEEN 1 AND 31),
+  granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (site_id, addon_id)
+);
+
+-- A Site's number series, defined by Admin or Accountant (or `phis billing series`). flags: 1 = Closed,
+-- 2 = Used (key, template and reset are fixed, kinds only grow). At most one open series per key.
+CREATE TABLE IF NOT EXISTS phis.billing_number_series (
+  id UUID PRIMARY KEY,
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  key VARCHAR(64) NOT NULL CHECK (key ~ '^[a-z0-9][a-z0-9-]{0,63}$'),
+  label VARCHAR(200) NOT NULL CHECK (label <> ''),
+  template VARCHAR(80) NOT NULL,
+  reset VARCHAR(8) NOT NULL CHECK (reset IN ('none','yearly')),
+  kinds SMALLINT NOT NULL CHECK (kinds BETWEEN 1 AND 7),
+  flags SMALLINT NOT NULL DEFAULT 0 CHECK (flags BETWEEN 0 AND 3),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at TIMESTAMPTZ NULL,
+  CHECK (((flags & 1) <> 0) = (closed_at IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS billing_number_series_open_key_idx
+  ON phis.billing_number_series (site_id, key) WHERE (flags & 1) = 0;
+
+-- The Add-ons that may number from a series.
+CREATE TABLE IF NOT EXISTS phis.billing_series_sources (
+  series_id UUID NOT NULL REFERENCES phis.billing_number_series(id) ON DELETE CASCADE,
+  addon_id VARCHAR(255) NOT NULL,
+  PRIMARY KEY (series_id, addon_id)
+);
+
+-- The next serial per series and reset period (`period_year`: the issue year for a yearly reset, 0 for
+-- none), advanced in the issuing transaction (`UPDATE ... SET next_value = next_value + 1 RETURNING`), which
+-- serializes concurrent issues on the row and rolls back with the document: gap-free, never a sequence.
+CREATE TABLE IF NOT EXISTS phis.billing_number_counters (
+  series_id UUID NOT NULL REFERENCES phis.billing_number_series(id) ON DELETE CASCADE,
+  period_year SMALLINT NOT NULL CHECK (period_year >= 0),
+  next_value BIGINT NOT NULL DEFAULT 1 CHECK (next_value >= 1),
+  PRIMARY KEY (series_id, period_year)
+);
+
+CREATE TABLE IF NOT EXISTS phis.billing_documents (
+  id UUID PRIMARY KEY,
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  kind VARCHAR(16) NOT NULL CHECK (kind IN ('invoice','credit-note','reminder','receipt','confirmation')),
+  number VARCHAR(40) NULL,
+  label VARCHAR(200) NOT NULL,
+  issuer_kind VARCHAR(8) NOT NULL CHECK (issuer_kind IN ('merchant','provider')),
+  issuer_name VARCHAR(200) NOT NULL,
+  issuer_tax_id VARCHAR(64) NULL,
+  source_kind VARCHAR(8) NOT NULL CHECK (source_kind IN ('provider','addon')),
+  source_addon_id VARCHAR(255) NOT NULL,
+  consumer_addon_id VARCHAR(255) NOT NULL,
+  reference VARCHAR(255) NOT NULL,
+  subject_id INT NULL REFERENCES phis.entitlement_subjects(id) ON DELETE SET NULL,
+  payment_id UUID NULL REFERENCES phis.payments(id) ON DELETE RESTRICT,
+  refund_id UUID NULL REFERENCES phis.payment_refunds(id) ON DELETE RESTRICT,
+  subscription_id UUID NULL REFERENCES phis.payment_subscriptions(id) ON DELETE RESTRICT,
+  period_index INT NULL,
+  corrects_id UUID NULL REFERENCES phis.billing_documents(id) ON DELETE RESTRICT,
+  -- A Provider's document: its own id for it, unique per Site and source.
+  provider_reference VARCHAR(255) NULL,
+  series_id UUID NULL REFERENCES phis.billing_number_series(id) ON DELETE RESTRICT,
+  series_year SMALLINT NULL,
+  issued_at TIMESTAMPTZ NOT NULL,
+  currency CHAR(3) NOT NULL,
+  total_minor BIGINT NOT NULL CHECK (total_minor >= 0),
+  presentment_currency CHAR(3) NULL,
+  presentment_minor BIGINT NULL CHECK (presentment_minor >= 0),
+  status VARCHAR(10) NOT NULL CHECK (status IN ('pending','available','voided','failed')),
+  content JSONB NULL,
+  payment_state JSONB NULL,
+  content_type VARCHAR(32) NULL CHECK (content_type IN ('application/pdf','text/html')),
+  byte_size BIGINT NULL CHECK (byte_size > 0),
+  sha256 CHAR(64) NULL,
+  storage_key VARCHAR(512) NULL,
+  -- An issued document's idempotency key and the request it answered.
+  idempotency_key VARCHAR(255) NULL,
+  request JSONB NULL,
+  void_reason VARCHAR(500) NULL,
+  retain_until TIMESTAMPTZ NOT NULL,
+  flags SMALLINT NOT NULL DEFAULT 0 CHECK (flags BETWEEN 0 AND 7),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  version INT NOT NULL DEFAULT 1 CHECK (version > 0),
+  CHECK ((presentment_currency IS NULL) = (presentment_minor IS NULL)),
+  CHECK ((storage_key IS NULL) = (sha256 IS NULL) AND (sha256 IS NULL) = (byte_size IS NULL) AND (byte_size IS NULL) = (content_type IS NULL)),
+  CHECK (status <> 'voided' OR (flags & 1) <> 0),
+  CHECK ((source_kind = 'provider') = (provider_reference IS NOT NULL)),
+  CHECK ((series_id IS NULL) = (series_year IS NULL)),
+  CHECK (series_id IS NULL OR number IS NOT NULL)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS billing_documents_provider_reference_idx
+  ON phis.billing_documents (site_id, source_addon_id, provider_reference) WHERE provider_reference IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS billing_documents_idempotency_idx
+  ON phis.billing_documents (site_id, source_addon_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS billing_documents_series_number_idx
+  ON phis.billing_documents (site_id, series_id, number) WHERE series_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS billing_documents_own_number_idx
+  ON phis.billing_documents (site_id, source_addon_id, kind, number) WHERE series_id IS NULL AND source_kind = 'addon' AND number IS NOT NULL;
+CREATE INDEX IF NOT EXISTS billing_documents_subject_idx
+  ON phis.billing_documents (site_id, subject_id, issued_at DESC, id DESC) WHERE subject_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS billing_documents_site_idx ON phis.billing_documents (site_id, issued_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS billing_documents_reference_idx ON phis.billing_documents (site_id, consumer_addon_id, reference);
+CREATE INDEX IF NOT EXISTS billing_documents_payment_idx ON phis.billing_documents (payment_id) WHERE payment_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS billing_documents_corrects_idx ON phis.billing_documents (corrects_id) WHERE corrects_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS billing_documents_pending_idx ON phis.billing_documents (created_at) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS billing_documents_retain_idx ON phis.billing_documents (retain_until);
+
+-- Core's private billing store per Site: what it holds, and its own ceiling (`phis site set
+-- --billing-quota-bytes/--billing-quota-objects`; NULL: no ceiling of its own). Booked before a file is
+-- written and given back when it is not, as an Add-on's store is.
+CREATE TABLE IF NOT EXISTS phis.billing_storage (
+  site_id SMALLINT PRIMARY KEY REFERENCES phis.sites(id) ON DELETE CASCADE,
+  bytes BIGINT NOT NULL DEFAULT 0 CHECK (bytes >= 0),
+  objects INT NOT NULL DEFAULT 0 CHECK (objects >= 0),
+  quota_bytes BIGINT NULL CHECK (quota_bytes >= 0),
+  quota_objects INT NULL CHECK (quota_objects >= 0)
 );

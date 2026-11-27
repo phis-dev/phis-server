@@ -9,6 +9,7 @@ import { PhiBaseRole } from "@/lib/constants/phi-base-roles";
 import {
   canPhiViewerAccess,
   PHI_ACCESS_ACCOUNTING,
+  PHI_ACCESS_BILLING,
   PHI_ACCESS_ACCOUNTING_OR_SUPPORT,
   PHI_ACCESS_CONTENT_EDITING,
   PHI_ACCESS_SITE_MAINTENANCE,
@@ -185,6 +186,17 @@ export async function requireSiteAccountingApiContext(request: NextRequest): Pro
   return requireSiteRoleApiContext(request, {
     policy: PHI_ACCESS_ACCOUNTING,
     missingRoleMessage: "Site accountant, maintainer, or admin role required.",
+  });
+}
+
+/**
+ * The Site's billing documents and number series (`billing:v1`): the Site roles Admin and Accountant only,
+ * never a Maintainer through the Site access `accounting` (owner, 2026-11-27).
+ */
+export async function requireSiteBillingApiContext(request: NextRequest): Promise<SiteAdminApiGuard> {
+  return requireSiteRoleApiContext(request, {
+    policy: PHI_ACCESS_BILLING,
+    missingRoleMessage: "Site accountant or admin role required.",
   });
 }
 

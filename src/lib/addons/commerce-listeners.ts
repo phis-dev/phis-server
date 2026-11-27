@@ -21,6 +21,10 @@ function listenersOf(entries: PhisInstalledManifestEntries, event: string): stri
 export const listEntitlementListenersOf = (entries: PhisInstalledManifestEntries) =>
   listenersOf(entries, PHIS_ADDON_EVENTS.entitlementChanged);
 
+/** The enabled Add-ons that declare a handler for `billing-document.changed`. */
+export const listBillingListenersOf = (entries: PhisInstalledManifestEntries) =>
+  listenersOf(entries, PHIS_ADDON_EVENTS.billingDocumentChanged);
+
 /** The enabled Add-ons that declare a handler for `product.changed`. */
 export const listProductListenersOf = (entries: PhisInstalledManifestEntries) =>
   listenersOf(entries, PHIS_ADDON_EVENTS.productChanged);

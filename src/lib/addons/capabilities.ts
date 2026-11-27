@@ -21,7 +21,7 @@ import { derivePhisAddonSchemaName } from "./schema-name.ts";
 import { quotePhiIdentifier } from "./schema-ddl.ts";
 import { readEffectiveGroupMembershipFlags } from "@/db/site-groups";
 import { PhiGroupMembershipFlags, phiGroupLevelOf } from "@/lib/constants/site-groups";
-import { readPhisSiteAccessHolder } from "./site-access.ts";
+import { holdsPhisBillingRole, readPhisSiteAccessHolder } from "./site-access.ts";
 import type { PhisSiteAccessHolder } from "./role-inclusion.ts";
 import { getPhisConfigSync } from "@/lib/config";
 import { resolvePhiSiteSourceLocale } from "@/lib/config-core";
@@ -40,6 +40,7 @@ import { buildPhisAddonCdnPublishCapability } from "./cdn-publish-capability.ts"
 import { buildPhisAddonMediaCapability } from "./media-capability.ts";
 import { buildPhisAddonMediaReleaseCapability } from "./media-release-capability.ts";
 import { buildPhisAddonEntitlementsCapability } from "./entitlements-capability.ts";
+import { buildPhisAddonBillingCapability } from "../billing/capability.ts";
 import { buildPhisAddonProductsCapability } from "./products-capability.ts";
 import { buildPhisAddonTranslationsCapability } from "./translations-capability.ts";
 import { buildPhisAddonEventsCapability } from "./events-capability.ts";
@@ -402,6 +403,18 @@ export function buildPhisAddonCapabilities(input: {
       siteId,
       actorUserId: input.actorUserId,
       readSiteAccess,
+      unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
+    });
+  }
+  if (required.includes(PHIS_CORE_CAPABILITIES.billing)) {
+    // Bound to the Add-on as the issuer of what it writes, and to the acting person for what they may read and open.
+    const actor = input.actorUserId;
+    capabilities.billing = buildPhisAddonBillingCapability({
+      manifest: input.manifest,
+      siteId,
+      actorUserId: actor,
+      // The Site role Admin or Accountant, never the Site access `accounting` (owner, 2026-11-27).
+      billingStaff: async () => actor != null && holdsPhisBillingRole(siteId, actor),
       unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
     });
   }

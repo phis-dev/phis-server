@@ -1114,6 +1114,39 @@ export function validatePhisAddonManifest(
     );
   }
 
+  /*
+   * What the Add-on does with billing documents (`billing:v1`): the kinds it issues, which the operator sees
+   * before allowing it as a source -- only with the capability, since issuing is through it -- and the
+   * Add-ons that may issue documents for its sales.
+   */
+  if (value.billing !== undefined) {
+    if (!isPhiRecord(value.billing)) {
+      issues.push("billing must be an object when it is stated at all.");
+    } else {
+      for (const key of Object.keys(value.billing)) {
+        if (key !== "issues" && key !== "issuedBy") issues.push(`billing.${key} is not part of billing; billing states issues and issuedBy.`);
+      }
+      const kinds = ["invoice", "credit-note", "reminder", "receipt", "confirmation"];
+      if (value.billing.issues !== undefined) {
+        if (!Array.isArray(value.billing.issues) || value.billing.issues.some((kind) => typeof kind !== "string" || !kinds.includes(kind))) {
+          issues.push(`billing.issues must be an array of ${kinds.join(", ")}.`);
+        } else {
+          assertUnique(value.billing.issues as string[], "billing.issues", issues);
+          if (value.billing.issues.length > 0 && !requiredIds.includes(PHIS_CORE_CAPABILITIES.billing)) {
+            issues.push(`billing.issues is stated without requiring ${PHIS_CORE_CAPABILITIES.billing}, through which documents are issued.`);
+          }
+        }
+      }
+      if (value.billing.issuedBy !== undefined) {
+        if (!Array.isArray(value.billing.issuedBy) || value.billing.issuedBy.some((id) => typeof id !== "string" || !/^@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/.test(id) || id === value.addonId)) {
+          issues.push("billing.issuedBy must be an array of other Add-ons' ids.");
+        } else {
+          assertUnique(value.billing.issuedBy as string[], "billing.issuedBy", issues);
+        }
+      }
+    }
+  }
+
   const migrationVersion = value.migrationVersion;
   if (!Number.isSafeInteger(migrationVersion) || Number(migrationVersion) < 0) {
     issues.push("migrationVersion must be a non-negative integer.");

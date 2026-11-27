@@ -29,6 +29,8 @@ import { prunePhisCdnUploads } from "@/lib/cdn-publish.mts";
 import { openPhisCdnTarget } from "@/lib/cdn-server";
 import { drainPhiNotifications } from "@/lib/notifications/deliver";
 import { collectDuePhisPaymentRecords, reconcileUnresolvedPhisPayments, runDuePhisPaymentSubscriptions } from "@/lib/payments/runtime";
+import { failPhisProviderDocuments, phisProviderDocumentCollector, removeExpiredPhisBillingDocuments, voidIncompletePhisBillingDocuments } from "@/lib/billing/documents";
+import { listPhisBillingListeners } from "@/lib/billing/capability";
 
 import { isPhiJobStepSubHourly } from "./slots";
 
@@ -106,10 +108,25 @@ export const PHI_CORE_JOBS: readonly PhiCoreJob[] = Object.freeze([
   {
     id: "payments.records.collect",
     schedule: { every: "5m" },
-    summary: "Collects what Providers settled for captured payments and refunds, retrying what is not there yet for 14 days.",
+    summary: "Collects what Providers documented and settled for captured payments and refunds, retrying what is not there yet for 14 days, and voids issued documents whose file did not follow within 24 hours.",
     async run(signal: AbortSignal) {
       // Bounded per run (PHIS_PAYMENT_RECORDS_BATCH); what is left is offered again in five minutes.
-      await collectDuePhisPaymentRecords(signal);
+      await collectDuePhisPaymentRecords(signal, {
+        collectDocuments: phisProviderDocumentCollector(listPhisBillingListeners),
+        gaveUp: async (task) => { if (task.kind === "documents") await failPhisProviderDocuments(task.siteId, task.paymentId, task.refundId, listPhisBillingListeners); },
+      });
+      if (signal.aborted) return;
+      // What a void owes is delivered by `addon-events.deliver`, like every outbox row.
+      await voidIncompletePhisBillingDocuments(listPhisBillingListeners);
+    },
+  },
+  {
+    id: "billing.documents.retain",
+    schedule: { every: "daily", at: "03:25" },
+    summary: "Removes the billing documents whose ten years of retention have ended, file first.",
+    async run() {
+      // Bounded per run; a Site with more is worked off over the following days.
+      await removeExpiredPhisBillingDocuments(500);
     },
   },
   {
