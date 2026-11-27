@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { PhisAddonInstallationFlag } from "@phis/contracts/addon";
+
 import { buildPhisMediaStorageServiceContext } from "@/lib/media-storage";
 import { writePhisSecretWithDb } from "./server-secrets-store.mts";
 import { buildPhiSecretReference } from "@/lib/secrets/reference";
@@ -95,7 +97,7 @@ describe("what a Storage Provider factory is handed", () => {
         return {};
       }
     })();
-    if (!installedHere["@phis/storage-s3"]?.enabled) {
+    if (((installedHere["@phis/storage-s3"]?.flags ?? 0) & PhisAddonInstallationFlag.Enabled) === 0) {
       return;
     }
     const { resolvePhisServiceProvider } = await import("@/lib/addons/services");

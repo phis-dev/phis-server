@@ -133,7 +133,7 @@ Two ways, and they answer different questions: whose file it is, and who chooses
 | Where the file lives | the Add-on's own Media Space, on its quota, not browsable in the Media library | the Site's Media library, where people upload, browse and reuse it |
 | Who puts it there | the Add-on: `begin` and `finalize` for a client's upload, `put` for bytes it holds | a person, in the Media library; the row keeps the id they chose |
 | Whose it is | the row's: one file in a `one` slot, several in a `many` slot | the Site's: any number of rows and Pages may name one Asset |
-| Showing it | `list`, or a `mirrorColumn` that brings the path with the row | `media:v1` `get`: `servable`, `path` and the thumbnail and preview paths, read when used and never stored |
+| Showing it | `list`, or a `mirrorColumn` that brings the path with the row | `media:v1` `get`: `flags` (`Servable`), `path` and the thumbnail and preview paths, read when used and never stored |
 | A person deletes it in the Media view | allowed: the link goes, the row stays | refused while a row names it (`409 media_asset_in_use`, scope `addon`) |
 | When the row goes | `data:v1` `delete` takes the files with it | the row goes; the Asset stays until the Add-on calls `media-release:v1` |
 
@@ -144,7 +144,7 @@ neither -- they are `products:v1`'s `imageAssetId`, `iconAssetId` and `gallery`.
 
 **A reference is a column of its own**, `{ name: "cover_asset_id", references: "core.mediaAsset",
 nullable: true, onDelete: "setNull" }`, on a `siteScoped` table. Where a visitor will see it, check on save
-that `media:v1` answers it `servable`.
+that `media:v1` answers it with `Servable`.
 
 **A gallery is a table, one row per picture**, with its position:
 
@@ -346,7 +346,7 @@ What each step is for:
    reachable yet. A rejected artifact is removed again rather than left half-installed.
 2. **`reconcile`** writes what is installed into the database registry for the named release.
 3. **`migrate`** derives and applies the schema. The Add-on is still disabled while this runs.
-4. **`enable`** marks it enabled in the desired state.
+4. **`enable`** sets `PhisAddonInstallationFlag.Enabled` on its entry in the desired state.
 5. **`reconcile`** publishes that to the registry. Routes that are not Site-scoped answer from here on.
 6. **`site --enable`** records that one Site asks for the Add-on and creates the groups its manifest
    declares there. Site-scoped routes, hooks, jobs, and capabilities answer for that Site from the next

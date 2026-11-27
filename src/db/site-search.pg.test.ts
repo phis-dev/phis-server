@@ -52,7 +52,7 @@ describe("the Site search index", () => {
     expect(result.total).toBe(2);
     expect(result.hits.map((hit) => hit.path)).toEqual(["/docs/install", "/home"]);
     const home = result.hits[1];
-    expect(home.snippet.some((segment) => segment.match && segment.text === "Installation")).toBe(true);
+    expect(home.snippet.some((segment) => (segment.flags & 1) !== 0 && segment.text === "Installation")).toBe(true);
     // The first hit matched in its title; its body says nothing of the word, so there is nothing to quote.
     expect(result.hits[0].snippet).toEqual([]);
   });

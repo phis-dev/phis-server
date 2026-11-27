@@ -52,8 +52,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.actor.mockResolvedValue(actorWith(PhiBaseRole.Admin));
   mocks.installed = {
-    [CRM]: { enabled: true, manifest: { requiredCoreCapabilities: [PHIS_CORE_CAPABILITIES.users], users: { fields: ["name", "email", "address"], background: ["name", "address"] } } },
-    "@acme/blog": { enabled: true, manifest: { requiredCoreCapabilities: [] } },
+    [CRM]: { flags: 1, manifest: { requiredCoreCapabilities: [PHIS_CORE_CAPABILITIES.users], users: { fields: ["name", "email", "address"], background: ["name", "address"] } } },
+    "@acme/blog": { flags: 1, manifest: { requiredCoreCapabilities: [] } },
   };
 });
 

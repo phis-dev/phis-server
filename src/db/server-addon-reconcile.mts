@@ -1,8 +1,9 @@
 import type { Pool, PoolClient } from "pg";
 
-import type {
-  PhisAddonDesiredStateEntry,
-  PhisAddonManifestV1,
+import {
+  PhisAddonInstallationFlag,
+  type PhisAddonDesiredStateEntry,
+  type PhisAddonManifestV1,
 } from "../lib/addons/contract.ts";
 import { PHIS_CORE_CAPABILITIES } from "../lib/addons/core-capabilities.ts";
 import { PHIS_ADDON_FLAG_GLOBALLY_ENABLED } from "../lib/constants/server-addons.ts";
@@ -117,7 +118,7 @@ export async function reconcilePhisAddons(
           manifest.serverAbi,
           digest,
           releaseBuildId,
-          desired.enabled ? PHIS_ADDON_FLAG_GLOBALLY_ENABLED : 0,
+          (desired.flags & PhisAddonInstallationFlag.Enabled) !== 0 ? PHIS_ADDON_FLAG_GLOBALLY_ENABLED : 0,
           PHIS_ADDON_FLAG_GLOBALLY_ENABLED,
         ],
       );

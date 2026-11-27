@@ -60,7 +60,7 @@ describe("the Site search index write", () => {
       "f1",
       [{ path: "/docs", title: "Docs", description: "", text: "Install phis." }],
     );
-    expect(body).toEqual({ accepted: true, state, dropped: 0 });
+    expect(body).toEqual({ flags: 1, state, dropped: 0 });
   });
 
   it("says when the set was already held", async () => {
@@ -68,7 +68,7 @@ describe("the Site search index write", () => {
 
     const { body } = await put({ area: "public", locale: "en", fingerprint: "f1", documents: [] });
 
-    expect(body.accepted).toBe(false);
+    expect(body.flags).toBe(0);
   });
 
   it("drops a document that is not one and writes the rest", async () => {

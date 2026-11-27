@@ -1,4 +1,5 @@
 import "server-only";
+import { PhisAddonInstallationFlag } from "@phis/contracts/addon";
 
 import {
   claimDuePhiNotifications,
@@ -207,7 +208,7 @@ export async function deliverPhiNotification(row: PhiNotificationRow): Promise<D
       if (!entry || !occasion) {
         throw new DropError(`${row.providerId} no longer declares the occasion ${row.occasion}.`);
       }
-      if (!entry.enabled) {
+      if ((entry.flags & PhisAddonInstallationFlag.Enabled) === 0) {
         throw new Error(`${row.providerId} is not enabled; its message stays owed.`);
       }
 

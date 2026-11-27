@@ -12,9 +12,9 @@ vi.mock("@/db/server-addon-roles.mts", () => ({
 }));
 vi.mock("./installed.ts", () => ({
   getPhisAddonInstalledManifest: () => ({
-    "@acme/shop": { enabled: true, manifest: { roles: [{ name: "clerk" }] } },
+    "@acme/shop": { flags: 1, manifest: { roles: [{ name: "clerk" }] } },
     "@acme/books": {
-      enabled: true,
+      flags: 1,
       manifest: {
         roles: [
           { name: "keeper", impliedBy: { siteAccess: "accounting" }, includes: ["reader"] },
@@ -23,9 +23,9 @@ vi.mock("./installed.ts", () => ({
         ],
       },
     },
-    "@acme/blog": { enabled: true, manifest: { roles: [{ name: "writer" }] } },
-    "@acme/off": { enabled: false, manifest: { roles: [{ name: "x" }] } },
-    "@acme/plain": { enabled: true, manifest: {} },
+    "@acme/blog": { flags: 1, manifest: { roles: [{ name: "writer" }] } },
+    "@acme/off": { flags: 0, manifest: { roles: [{ name: "x" }] } },
+    "@acme/plain": { flags: 1, manifest: {} },
   }),
 }));
 

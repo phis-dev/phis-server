@@ -56,7 +56,7 @@ import type {
   PhisMediaStorageProviderId,
   PhisMediaStorageServiceContext,
 } from "@phis/contracts/addon";
-import { PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID } from "@phis/contracts/addon";
+import { PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID, PhisMediaStorageProbeFlag } from "@phis/contracts/addon";
 
 export type PhisMediaStorageServiceOptions = {
   profile?: {
@@ -632,7 +632,7 @@ export class PhisLocalMediaStorageAdapter implements PhisMediaStorageAdapter {
     // Nothing is asserted here, so nothing is verified: the digest on a Local upload is the SHA-256
     // Core computes while writing, which is a property of the proxy path rather than of this endpoint.
     return {
-      writable: findings.length === 0,
+      flags: findings.length === 0 ? PhisMediaStorageProbeFlag.Writable : 0,
       verifiedAlgorithms: [],
       findings,
     };

@@ -4,7 +4,7 @@ vi.mock("server-only", () => ({}));
 
 const mocks = vi.hoisted(() => ({ state: vi.fn(), deliver: vi.fn(), build: vi.fn(), sync: vi.fn() }));
 const entry = {
-  enabled: true,
+  flags: 1,
   manifestDigest: "digest",
   load: async () => ({ phisAddon: { jobHandlers: { sync: mocks.sync } } }),
   manifest: {

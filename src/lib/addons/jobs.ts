@@ -1,4 +1,5 @@
 import "server-only";
+import { PhisAddonInstallationFlag } from "@phis/contracts/addon";
 
 import { randomUUID } from "node:crypto";
 
@@ -46,7 +47,7 @@ export function requirePhisAddonServableEntry(addonId: string, refuse: (message:
   if (!entry) {
     throw refuse(`${addonId} is not installed.`);
   }
-  if (!entry.enabled) {
+  if ((entry.flags & PhisAddonInstallationFlag.Enabled) === 0) {
     throw refuse(`${addonId} is not enabled.`);
   }
   const servable = readPhisAddonServability(entry);

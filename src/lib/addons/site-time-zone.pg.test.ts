@@ -59,7 +59,7 @@ const entry = vi.hoisted(() => {
     commandHandlers: { showDay: (context: { site: unknown }) => { record("command")(context); return { ok: true }; } },
     eventHandlers: { closed: record("event") },
   };
-  return { enabled: true, manifest, manifestDigest: "pgtest", load: async () => ({ phisAddon }) };
+  return { flags: 1, manifest, manifestDigest: "pgtest", load: async () => ({ phisAddon }) };
 });
 
 vi.mock("@/lib/addons/installed", () => ({

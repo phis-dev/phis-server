@@ -10,7 +10,7 @@ import type {
 } from "@phis/contracts/products";
 
 import { PhiMediaDeliveryPolicy, PhiMediaLifecycleStatus } from "@phis/contracts/media";
-import type { PhisProductLink } from "@phis/contracts/products";
+import { PHIS_PRODUCT_TERMS_FLAG_MASK, PhisProductFlag, type PhisProductLink } from "@phis/contracts/products";
 import { readPhiPageReference, type PhiLinkTarget } from "@phis/contracts/references";
 
 import { PHIS_PRODUCT_FLAG } from "../lib/constants/products.ts";
@@ -112,6 +112,43 @@ export class PhisProductRuleError extends Error {}
 
 const FLAG = PHIS_PRODUCT_FLAG;
 
+/**
+ * `phis.products.flags` keeps its own bits (`PHIS_PRODUCT_FLAG`, with Core's `SupplierOff` and `Declared`
+ * beside the statement), and `products:v1` answers `PhisProductFlag`: the two are translated here and only
+ * here. `Supplied` is never stored; it is read from the supplier's installation with the row.
+ */
+const STATEMENT_BITS: readonly (readonly [number, number])[] = [
+  [FLAG.Counted, PhisProductFlag.Counted],
+  [FLAG.Free, PhisProductFlag.Free],
+  [FLAG.AccountRequired, PhisProductFlag.AccountRequired],
+];
+
+/** The supplier's statement of a stored row, in `PhisProductFlag` bits. */
+function statementFlags(stored: number): number {
+  let flags = 0;
+  for (const [column, contract] of STATEMENT_BITS) if ((stored & column) !== 0) flags |= contract;
+  return flags;
+}
+
+/** A statement in `PhisProductFlag` bits as `phis.products.flags` bits; the other bits are not the statement's. */
+function storedStatement(flags: number): number {
+  let stored = 0;
+  for (const [column, contract] of STATEMENT_BITS) if ((flags & contract) !== 0) stored |= column;
+  return stored;
+}
+
+/** A product's whole `PhisProductFlag` as `products:v1` answers it. */
+function productFlags(row: Pick<ProductRow, "flags" | "publisher" | "supplied">): number {
+  return statementFlags(row.flags)
+    | (row.supplied ? PhisProductFlag.Supplied : 0)
+    | (row.publisher === null || (row.flags & FLAG.Released) !== 0 ? PhisProductFlag.Released : 0);
+}
+
+/** The released terms in force on a stored row. */
+function termsInForce(row: Pick<ProductRow, "sale" | "referral_url" | "flags" | "parts">): PhisProductReleasedTerms {
+  return { sale: row.sale, referralUrl: row.referral_url, flags: statementFlags(row.flags) & PHIS_PRODUCT_TERMS_FLAG_MASK, parts: row.parts as PhisProductId[] };
+}
+
 /*
  * The picture and the icon are joined into every read, not read per row: a list shows them on every line,
  * and an address of a variant needs the Asset's content type and variant version beside the revision.
@@ -197,7 +234,6 @@ function mapProduct(
     id: `${row.supplier_addon_id}:${row.key}` as PhisProductId,
     rowId: row.id,
     supplier: row.supplier_addon_id,
-    supplied: row.supplied,
     publisher: row.publisher,
     type: row.type,
     title: row.title,
@@ -211,14 +247,11 @@ function mapProduct(
     iconMedia: productMedia(row, "icon"),
     galleryMedia,
     textMessages,
-    counted: (row.flags & FLAG.Counted) !== 0,
     sale: row.sale,
     referralUrl: row.referral_url,
-    free: (row.flags & FLAG.Free) !== 0,
-    accountRequired: (row.flags & FLAG.AccountRequired) !== 0,
+    flags: productFlags(row),
     parts: row.parts as PhisProductId[],
     state: row.state,
-    released: row.publisher === null || (row.flags & FLAG.Released) !== 0,
     pendingTerms: row.pending_terms,
     attributes,
     version: row.version,
@@ -644,8 +677,8 @@ async function isNamedByEntitlement(db: DbQueryable, siteId: number, id: PhisPro
 }
 
 const sameTerms = (a: PhisProductReleasedTerms, b: PhisProductReleasedTerms) =>
-  a.sale === b.sale && a.referralUrl === b.referralUrl && a.free === b.free
-  && a.accountRequired === b.accountRequired
+  a.sale === b.sale && a.referralUrl === b.referralUrl
+  && (a.flags & PHIS_PRODUCT_TERMS_FLAG_MASK) === (b.flags & PHIS_PRODUCT_TERMS_FLAG_MASK)
   && a.parts.length === b.parts.length && a.parts.every((part, index) => part === b.parts[index]);
 
 /**
@@ -699,7 +732,7 @@ export type RegisterOutcome = "created" | "updated" | "unchanged";
  *
  * A new product is `draft`, or `active` where its manifest declared it (`declared`): the operator who
  * switched the Add-on on chose it, and it belongs to the Site. On a publisher's product that is already
- * released, changed `sale`, `referralUrl`, `free`, `accountRequired` or `parts` wait in `pending_terms`; before the first
+ * released, changed `sale`, `referralUrl`, `Free`, `AccountRequired` or `parts` wait in `pending_terms`; before the first
  * release every field changes at once. A publisher is fixed: changing it would turn a released product
  * into the Site's own, which needs no release.
  */
@@ -727,7 +760,7 @@ export async function registerProduct(pool: Pool, input: {
     const pickGallery = (current: readonly number[]) => (input.declared ? current : draft.gallery);
     if (!row) {
       await assertParts(client, siteId, id, draft.parts);
-      const flags = (draft.counted ? FLAG.Counted : 0) | (draft.free ? FLAG.Free : 0) | (draft.accountRequired ? FLAG.AccountRequired : 0)
+      const flags = storedStatement(draft.flags)
         | (draft.publisher === null ? FLAG.Released : 0) | (input.declared ? FLAG.Declared : 0);
       const inserted = await client.query(
         `INSERT INTO phis.products (site_id, supplier_addon_id, key, publisher, type, title, summary, description, source_locale,
@@ -753,21 +786,20 @@ export async function registerProduct(pool: Pool, input: {
       throw new PhisProductRuleError(`${id} has a publisher of its own that does not change; register another product instead.`);
     }
     const counted = (row.flags & FLAG.Counted) !== 0;
-    if (counted !== draft.counted && await isNamedByEntitlement(client, siteId, id)) {
+    if (counted !== ((draft.flags & PhisProductFlag.Counted) !== 0) && await isNamedByEntitlement(client, siteId, id)) {
       throw new PhisProductRuleError(`${id} is named by an entitlement; whether it counts is fixed.`);
     }
-    const current: PhisProductReleasedTerms = {
-      sale: row.sale, referralUrl: row.referral_url, free: (row.flags & FLAG.Free) !== 0,
-      accountRequired: (row.flags & FLAG.AccountRequired) !== 0, parts: row.parts as PhisProductId[],
+    const current = termsInForce(row);
+    const asked: PhisProductReleasedTerms = {
+      sale: draft.sale, referralUrl: draft.referralUrl, flags: draft.flags & PHIS_PRODUCT_TERMS_FLAG_MASK, parts: draft.parts,
     };
-    const asked: PhisProductReleasedTerms = { sale: draft.sale, referralUrl: draft.referralUrl, free: draft.free, accountRequired: draft.accountRequired, parts: draft.parts };
     const holdsBack = row.publisher !== null && (row.flags & FLAG.Released) !== 0;
     const terms = holdsBack ? current : asked;
     const pending = holdsBack && !sameTerms(asked, current) ? asked : null;
     if (!sameTerms(asked, current)) await assertParts(client, siteId, id, draft.parts);
 
     const flags = (row.flags & ~(FLAG.Counted | FLAG.Free | FLAG.AccountRequired | FLAG.Declared))
-      | (draft.counted ? FLAG.Counted : 0) | (terms.free ? FLAG.Free : 0) | (terms.accountRequired ? FLAG.AccountRequired : 0)
+      | storedStatement((draft.flags & PhisProductFlag.Counted) | terms.flags)
       | ((row.flags & FLAG.Declared) !== 0 || input.declared ? FLAG.Declared : 0);
     const storedGallery = await readGalleryIds(client, row.id);
     const gallery = pickGallery(storedGallery);
@@ -925,12 +957,9 @@ export async function releaseProduct(pool: Pool, input: {
     const pending = row.pending_terms;
     if (released && !pending) return { product: (await readProduct(client, input.siteId, input.productId))!, outcome: "unchanged" as const };
     if (pending) await assertParts(client, input.siteId, input.productId, pending.parts);
-    const terms: PhisProductReleasedTerms = pending ?? {
-      sale: row.sale, referralUrl: row.referral_url, free: (row.flags & FLAG.Free) !== 0,
-      accountRequired: (row.flags & FLAG.AccountRequired) !== 0, parts: row.parts as PhisProductId[],
-    };
+    const terms: PhisProductReleasedTerms = pending ?? termsInForce(row);
     const flags = ((row.flags | FLAG.Released) & ~(FLAG.Free | FLAG.AccountRequired))
-      | (terms.free ? FLAG.Free : 0) | (terms.accountRequired ? FLAG.AccountRequired : 0);
+      | storedStatement(terms.flags & PHIS_PRODUCT_TERMS_FLAG_MASK);
     await client.query(
       `UPDATE phis.products
        SET sale = $2, referral_url = $3, parts = $4::text[], flags = $5::int, pending_terms = NULL,

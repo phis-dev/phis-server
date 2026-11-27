@@ -27,18 +27,18 @@ vi.mock("@/lib/guards/site-admin-api", () => {
 });
 vi.mock("@/lib/addons/installed", () => ({
   getPhisAddonInstalledManifest: () => ({
-    "@pgtest/save-shop": { enabled: true, manifest: { addonId: "@pgtest/save-shop", roles: [
+    "@pgtest/save-shop": { flags: 1, manifest: { addonId: "@pgtest/save-shop", roles: [
       { name: "clerk", grantableBy: { siteAccess: "site-admin" } },
       { name: "manager", grantableBy: { siteAccess: "site-admin" } },
     ] } },
-    "@pgtest/save-blog": { enabled: true, manifest: { addonId: "@pgtest/save-blog", roles: [
+    "@pgtest/save-blog": { flags: 1, manifest: { addonId: "@pgtest/save-blog", roles: [
       { name: "editor", grantableBy: { role: "chief" } },
       { name: "chief", grantableBy: { siteAccess: "site-admin" } },
     ] } },
-    "@pgtest/save-off": { enabled: true, manifest: { addonId: "@pgtest/save-off", roles: [
+    "@pgtest/save-off": { flags: 1, manifest: { addonId: "@pgtest/save-off", roles: [
       { name: "x", grantableBy: { siteAccess: "site-admin" } },
     ] } },
-    "@pgtest/save-down": { enabled: true, manifest: { addonId: "@pgtest/save-down", roles: [
+    "@pgtest/save-down": { flags: 1, manifest: { addonId: "@pgtest/save-down", roles: [
       { name: "x", grantableBy: { siteAccess: "site-admin" } },
       { name: "y", grantableBy: { siteAccess: "site-admin" } },
     ] } },

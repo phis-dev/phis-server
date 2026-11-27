@@ -4,6 +4,7 @@ import {
   PHIS_ADDON_TRANSLATION_CONTEXT_MAX,
   PHIS_ADDON_TRANSLATION_TEXT_MAX,
   PHIS_ADDON_TRANSLATION_TEXTS_MAX,
+  PhisTranslationResultFlag,
   type PhisTranslationsCapabilityV1,
 } from "@phis/contracts/addon";
 
@@ -117,14 +118,14 @@ export function buildPhisAddonTranslationsCapability(input: {
       const asWritten = readTexts(texts);
       const language = readSourceLocale(sourceLocale);
       const target = readLocale(locale, language);
-      if (!target) return { texts: [...asWritten], provisional: false };
+      if (!target) return { texts: [...asWritten], flags: 0 };
       // The TR route's own choice, reading only what `record` wrote: in the Site's language the Site path on the
       // recorded message; in another a translation held on it wins and the rest takes the external path.
       const { value, standIn } = await trackTranslationStandIns(() => translateSiteTextsWithCache({
         siteId, locale: target, sourceLocale: language, canonicalLocale: input.siteSourceLocale, msgs: asWritten, ctx,
         storedContexts: asWritten.map(() => ctx), format: "text", create: false, recordedMessages: true,
       }));
-      return { texts: value, provisional: standIn };
+      return { texts: value, flags: standIn ? PhisTranslationResultFlag.Provisional : 0 };
     },
   } satisfies PhisTranslationsCapabilityV1;
 }

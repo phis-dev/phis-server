@@ -6,7 +6,7 @@ const state = vi.hoisted(() => ({
   enqueue: vi.fn(async () => 2),
   deliver: vi.fn(),
   log: vi.fn(),
-  installed: {} as Record<string, { enabled: boolean; manifest: { eventHandlers?: { event: string }[] } }>,
+  installed: {} as Record<string, { flags: number; manifest: { eventHandlers?: { event: string }[] } }>,
 }));
 vi.mock("./installed.ts", () => ({ getPhisAddonInstalledManifest: () => state.installed }));
 vi.mock("./event-trigger.ts", () => ({ schedulePhisAddonEventDelivery: (...args: unknown[]) => state.deliver(...args) }));
@@ -36,10 +36,10 @@ describe("emitting an event", () => {
     state.deliver.mockClear();
     state.log.mockClear();
     state.installed = {
-      "@acme/status": { enabled: true, manifest: { eventHandlers: [{ event: EVENT }] } },
-      "@acme/board": { enabled: true, manifest: { eventHandlers: [{ event: EVENT }, { event: "thread.status.changed" }] } },
-      "@acme/off": { enabled: false, manifest: { eventHandlers: [{ event: EVENT }] } },
-      "@acme/deaf": { enabled: true, manifest: {} },
+      "@acme/status": { flags: 1, manifest: { eventHandlers: [{ event: EVENT }] } },
+      "@acme/board": { flags: 1, manifest: { eventHandlers: [{ event: EVENT }, { event: "thread.status.changed" }] } },
+      "@acme/off": { flags: 0, manifest: { eventHandlers: [{ event: EVENT }] } },
+      "@acme/deaf": { flags: 1, manifest: {} },
     };
   });
 

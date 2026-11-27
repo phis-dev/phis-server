@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   PHI_SEARCH_INDEXED_AREA_MASK,
   PHI_SEARCH_MAX_DOCUMENTS,
+  PhiSearchIndexWriteResultFlag,
   type PhiSearchIndexWriteResult,
 } from "@phis/contracts/search";
 
@@ -79,7 +80,7 @@ export async function PUT(request: NextRequest) {
   }
 
   const answer: PhiSearchIndexWriteResult & { dropped: number } = {
-    accepted: result.status === "written",
+    flags: result.status === "written" ? PhiSearchIndexWriteResultFlag.Accepted : 0,
     state: result.state,
     dropped,
   };

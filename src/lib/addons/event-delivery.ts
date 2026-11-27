@@ -1,4 +1,5 @@
 import "server-only";
+import { PhisAddonInstallationFlag } from "@phis/contracts/addon";
 
 import type {
   PhisAddonEventContext,
@@ -179,7 +180,7 @@ async function deliverPhisAddonEventsLocked(input: {
   }
 
   const entry = getPhisAddonInstalledManifest()[addonId];
-  if (!entry || !entry.enabled) {
+  if (!entry || (entry.flags & PhisAddonInstallationFlag.Enabled) === 0) {
     // Not installed here, or switched off. The rows stay owed: a release that is rolled forward again
     // should find its events, and a release rolled back should not silently lose them.
     return { delivered: 0, failed: pending.length };

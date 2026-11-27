@@ -1,5 +1,11 @@
 import type { PhisProductDraft, PhisProductId, PhisProductSale } from "@phis/contracts/addon";
-import { PHIS_PRODUCT_DESCRIPTION_MAX, PHIS_PRODUCT_GALLERY_MAX, readPhisProductLink, type PhisProductLink } from "@phis/contracts/products";
+import {
+  PHIS_PRODUCT_DESCRIPTION_MAX,
+  PHIS_PRODUCT_GALLERY_MAX,
+  PhisProductFlag,
+  readPhisProductLink,
+  type PhisProductLink,
+} from "@phis/contracts/products";
 
 import { resolvePhiLocaleBase, resolvePhiLocaleCapability } from "../locale.ts";
 
@@ -23,6 +29,8 @@ export const PHIS_PRODUCT_PUBLISHER_MAX_LENGTH = 255;
 export const PHIS_PRODUCT_REFERRAL_URL_MAX_LENGTH = 2000;
 export const PHIS_PRODUCT_PARTS_MAX = 100;
 const SALES: readonly PhisProductSale[] = ["own", "referral", "payout"];
+/** The bits of `PhisProductFlag` a supplier states in a draft; `Supplied` and `Released` are Core's. */
+export const PHIS_PRODUCT_DRAFT_FLAG_MASK = PhisProductFlag.Counted | PhisProductFlag.AccountRequired | PhisProductFlag.Free;
 
 export class PhisProductDraftError extends Error {}
 
@@ -60,11 +68,10 @@ export type PhisNormalizedProductDraft = {
   iconAssetId: number | null;
   /** First to last, none twice. */
   gallery: number[];
-  counted: boolean;
   sale: PhisProductSale;
   referralUrl: string | null;
-  free: boolean;
-  accountRequired: boolean;
+  /** `PhisProductFlag`: `Counted`, `AccountRequired` and `Free` only (`PHIS_PRODUCT_DRAFT_FLAG_MASK`). */
+  flags: number;
   parts: PhisProductId[];
 };
 
@@ -95,7 +102,7 @@ function readSourceLocale(value: unknown): string | null {
 /**
  * The draft with its defaults filled in, or the first rule it breaks.
  *
- * The rules that need other rows -- that a part exists, that nothing forms a circle, that `counted` is
+ * The rules that need other rows -- that a part exists, that nothing forms a circle, that `Counted` is
  * still free to change -- are the database layer's.
  */
 export function normalizePhisProductDraft(draft: PhisProductDraft, ownId?: PhisProductId): PhisNormalizedProductDraft {
@@ -124,11 +131,18 @@ export function normalizePhisProductDraft(draft: PhisProductDraft, ownId?: PhisP
   }
   if (new Set(parts).size !== parts.length) throw new PhisProductDraftError("parts names a product twice.");
   if (ownId && parts.includes(ownId)) throw new PhisProductDraftError("A product is not a part of itself.");
-  const counted = draft.counted === true;
-  if (draft.counted !== undefined && typeof draft.counted !== "boolean") throw new PhisProductDraftError("counted is a boolean.");
-  if (draft.accountRequired !== undefined && typeof draft.accountRequired !== "boolean") throw new PhisProductDraftError("accountRequired is a boolean.");
-  if (draft.free !== undefined && typeof draft.free !== "boolean") throw new PhisProductDraftError("free is a boolean.");
-  if (counted && parts.length > 0) throw new PhisProductDraftError("A bundle is not counted.");
+  for (const earlier of ["counted", "free", "accountRequired"]) {
+    // The booleans of phis-contracts before 0.9: refused rather than ignored, so a supplier still on them
+    // does not register a product that silently lost its terms.
+    if (Object.hasOwn(draft, earlier)) {
+      throw new PhisProductDraftError(`${earlier} is no longer read; state it in flags (PhisProductFlag).`);
+    }
+  }
+  const flags = draft.flags === undefined ? 0 : draft.flags;
+  if (!Number.isInteger(flags) || flags < 0 || (flags & ~PHIS_PRODUCT_DRAFT_FLAG_MASK) !== 0) {
+    throw new PhisProductDraftError("flags carries only the PhisProductFlag bits Counted, AccountRequired and Free; Supplied and Released are Core's.");
+  }
+  if ((flags & PhisProductFlag.Counted) !== 0 && parts.length > 0) throw new PhisProductDraftError("A bundle is not counted.");
   const imageAssetId = draft.imageAssetId ?? null;
   if (imageAssetId !== null && (!Number.isInteger(imageAssetId) || imageAssetId <= 0)) {
     throw new PhisProductDraftError("imageAssetId is the id of an Asset of the Site, or null.");
@@ -167,11 +181,9 @@ export function normalizePhisProductDraft(draft: PhisProductDraft, ownId?: PhisP
     imageAssetId,
     iconAssetId,
     gallery: [...gallery],
-    counted,
     sale,
     referralUrl,
-    free: draft.free === true,
-    accountRequired: draft.accountRequired === true,
+    flags,
     parts: [...parts] as PhisProductId[],
   };
 }

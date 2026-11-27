@@ -2,10 +2,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { Pool } from "pg";
 
-import type { PhisProductId } from "@phis/contracts/products";
+import { PhisProductFlag, type PhisProductId } from "@phis/contracts/products";
 
 const installed = vi.hoisted(() => ({
-  addons: [] as { addonId: string; enabled: boolean; manifest: Record<string, unknown> }[],
+  addons: [] as { addonId: string; flags: number; manifest: Record<string, unknown> }[],
 }));
 vi.mock("./addons.mts", () => ({ readAddonDesiredState: () => ({ formatVersion: 1, addons: installed.addons }) }));
 
@@ -47,7 +47,7 @@ describe.skipIf(!configured)("phis product and phis entitlement", () => {
   async function make(key: string, rest: { publisher?: string; active?: boolean; counted?: boolean } = {}) {
     await registerProduct(pool, {
       siteId: site.id, supplier: SUPPLIER, listeners: [],
-      draft: normalizePhisProductDraft({ key, type: "licence", title: `Title ${key}`, summary: "S", publisher: rest.publisher, counted: rest.counted }),
+      draft: normalizePhisProductDraft({ key, type: "licence", title: `Title ${key}`, summary: "S", publisher: rest.publisher, flags: rest.counted ? PhisProductFlag.Counted : 0 }),
     });
     if (rest.active) await setProductState(pool, { siteId: site.id, supplier: SUPPLIER, key, state: "active", listeners: [] });
   }
@@ -66,9 +66,9 @@ describe.skipIf(!configured)("phis product and phis entitlement", () => {
     await enablePhiTestAddonForSite(site, LISTENER);
     await activatePhiTestAddonForSite(site, SUPPLIER);
     installed.addons = [
-      { addonId: SUPPLIER, enabled: true, manifest: {} },
-      { addonId: SHOP, enabled: true, manifest: {} },
-      { addonId: LISTENER, enabled: true, manifest: { eventHandlers: [{ event: "product.changed" }, { event: "entitlement.changed" }] } },
+      { addonId: SUPPLIER, flags: 1, manifest: {} },
+      { addonId: SHOP, flags: 1, manifest: {} },
+      { addonId: LISTENER, flags: 1, manifest: { eventHandlers: [{ event: "product.changed" }, { event: "entitlement.changed" }] } },
     ];
   });
 
@@ -118,7 +118,7 @@ describe.skipIf(!configured)("phis product and phis entitlement", () => {
 
     await registerProduct(pool, {
       siteId: site.id, supplier: SUPPLIER, listeners: [],
-      draft: normalizePhisProductDraft({ key: "b", type: "licence", title: "Title b", summary: "S", publisher: "acme", free: true }),
+      draft: normalizePhisProductDraft({ key: "b", type: "licence", title: "Title b", summary: "S", publisher: "acme", flags: PhisProductFlag.Free }),
     });
     expect((await product(["show"], { product: id("b") })).lines.join("\n")).toContain("pending    sale own, free");
     expect((await product(["release"], { product: id("b") })).data.outcome).toBe("applied");
@@ -234,13 +234,13 @@ describe.skipIf(!configured)("phis product and phis entitlement", () => {
     const supplier = "@pgtest/cli-declared";
     await enablePhiTestAddonForSite(site, supplier);
     await pool.query(`UPDATE phis.server_addons SET flags = 1 WHERE addon_id = $1`, [supplier]);
-    const entries = Object.fromEntries(installed.addons.map((a) => [a.addonId, { enabled: a.enabled, manifest: a.manifest as never }]));
-    entries[supplier] = { enabled: true, manifest: {} as never };
+    const entries = Object.fromEntries(installed.addons.map((a) => [a.addonId, { flags: a.flags, manifest: a.manifest as never }]));
+    entries[supplier] = { flags: 1, manifest: {} as never };
 
     await pool.query(`DELETE FROM phis.addon_event_outbox WHERE site_id = $1`, [site.id]);
     const first = await syncAddonProductsAtSite(pool, {
       addonId: supplier, siteId: site.id, entries, sourceLocale: "en", configRoot: process.cwd(),
-      declared: [{ key: "pass", type: "addon", title: "Pass", summary: "S" }, { key: "plan", type: "plan", title: "Plan", summary: "S", free: true }],
+      declared: [{ key: "pass", type: "addon", title: "Pass", summary: "S" }, { key: "plan", type: "plan", title: "Plan", summary: "S", flags: PhisProductFlag.Free }],
     });
     expect(first.map((a) => a.action)).toEqual(["created", "created"]);
     expect((await outbox("product.changed")).map((row) => row.addon_id)).toEqual([LISTENER, LISTENER]);

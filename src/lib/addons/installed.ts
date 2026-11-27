@@ -111,7 +111,7 @@ async function loadArtifact(entry: PhisAddonDesiredStateEntry) {
 
 function toBuildEntry(entry: PhisAddonDesiredStateEntry): PhisAddonBuildEntry {
   return {
-    enabled: entry.enabled,
+    flags: entry.flags,
     manifestDigest: entry.manifestDigest,
     manifest: entry.manifest,
     load: () => loadArtifact(entry),
@@ -160,7 +160,7 @@ export function getPhisAddonBuildDigest() {
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([addonId, entry]) => ({
       addonId,
-      enabled: entry.enabled,
+      flags: entry.flags,
       manifestDigest: entry.manifestDigest,
       packageVersion: entry.manifest.packageVersion,
     }));

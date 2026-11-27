@@ -1,6 +1,8 @@
 import "server-only";
 
 import {
+  PhisSupportForwardRequestFlag,
+  PhisSupportForwardingProbeFlag,
   PhisSupportTicketStatus,
   type PhisSupportForwardingAdapterV1,
   type PhisSupportForwardingServiceContext,
@@ -143,7 +145,7 @@ function parseSupportForwardTarget(value: string) {
 
 /**
  * Where this Site's tickets may go right now: every target of every implementation that resolves here and
- * answers its probe with `usable`, by the name the implementation gives it.
+ * answers its probe with `Usable`, by the name the implementation gives it.
  */
 export async function listSupportForwardTargets(site: { id: number; key: string }) {
   const implementations = await targetSource(site);
@@ -151,7 +153,7 @@ export async function listSupportForwardTargets(site: { id: number; key: string 
     implementations.map(async (implementation) => ({ implementation, answer: await probe(implementation) })),
   );
   return probed.flatMap(({ implementation, answer }) =>
-    answer?.usable
+    answer && (answer.flags & PhisSupportForwardingProbeFlag.Usable) !== 0
       ? answer.targets.map((target) => ({
         target: formatSupportForwardTarget(implementation.providerKey, target.key),
         label: target.label,
@@ -210,7 +212,7 @@ export async function forwardSupportTicket(input: {
     throw new SupportForwardError("unknown-target", "That is not somewhere this Site can forward to.");
   }
   const answer = await probe(target);
-  const place = answer?.usable ? answer.targets.find((candidate) => candidate.key === chosen.key) : undefined;
+  const place = answer && (answer.flags & PhisSupportForwardingProbeFlag.Usable) !== 0 ? answer.targets.find((candidate) => candidate.key === chosen.key) : undefined;
   if (!place) {
     throw new SupportForwardError("unusable", "That target cannot take work right now.");
   }
@@ -222,7 +224,7 @@ export async function forwardSupportTicket(input: {
       target: place.key,
       ticket: { id: ticket.id, threadId: ticket.threadId, subject: ticket.subject, typeKey: ticket.typeKey },
       task: { title },
-      mirror: ticket.mirror,
+      flags: ticket.mirror ? PhisSupportForwardRequestFlag.Mirror : 0,
       body: ticket.body,
       actor: { userId: input.actorUserId, displayName: null },
       signal: AbortSignal.timeout(FORWARD_TIMEOUT_MS),

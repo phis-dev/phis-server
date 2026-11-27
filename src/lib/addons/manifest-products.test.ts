@@ -48,8 +48,8 @@ describe("products in a manifest", () => {
   it("admits well-formed products, and a manifest that states none", () => {
     expect(issuesOf([
       { key: "pro", type: "addon", title: "Pro", summary: "" },
-      { key: "seats.team-1", type: "plan", title: "Seats", summary: "Per seat", counted: true, free: true },
-      { key: "acct", type: "plan", title: "Acct", summary: "", accountRequired: true },
+      { key: "seats.team-1", type: "plan", title: "Seats", summary: "Per seat", flags: 1 | 4 },
+      { key: "acct", type: "plan", title: "Acct", summary: "", flags: 2 },
       { key: "bundle", type: "plan", title: "Bundle", summary: "", parts: ["@acme/licenses:pro"] },
       { key: "ext", type: "addon", title: "Ext", summary: "", sale: "referral", referralUrl: "https://acme.example/ext" },
     ])).toEqual([]);
@@ -75,10 +75,11 @@ describe("products in a manifest", () => {
     expect(issuesOf([{ ...entry, sourceLocale: "fr" }])).toContain("products[0].sourceLocale is not declared in a manifest.");
     // A manifest may state a description, as every other text of the product.
     expect(issuesOf([{ ...entry, description: "## Long" }])).toEqual([]);
-    expect(issuesOf([{ ...entry, accountRequired: "yes" }]).join("\n")).toMatch(/accountRequired is a boolean/);
-    expect(issuesOf([{ ...entry, counted: "yes" }]).join("\n")).toMatch(/counted is a boolean/);
+    expect(issuesOf([{ ...entry, accountRequired: true }]).join("\n")).toMatch(/accountRequired is no longer read/);
+    expect(issuesOf([{ ...entry, flags: "yes" }]).join("\n")).toMatch(/flags carries only/);
+    expect(issuesOf([{ ...entry, flags: 16 }]).join("\n")).toMatch(/Supplied and Released are Core's/);
     expect(issuesOf([{ ...entry, sale: "referral" }]).join("\n")).toMatch(/referralUrl/);
-    expect(issuesOf([{ ...entry, counted: true, parts: ["@acme/licenses:x"] }]).join("\n")).toMatch(/not counted/);
+    expect(issuesOf([{ ...entry, flags: 1, parts: ["@acme/licenses:x"] }]).join("\n")).toMatch(/not counted/);
     expect(issuesOf([{ ...entry, parts: ["@acme/licenses:pro"] }]).join("\n")).toMatch(/part of itself/);
     expect(issuesOf([{ key: "pro" }]).length).toBeGreaterThan(0);
   });

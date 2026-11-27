@@ -1,4 +1,4 @@
-import { PHIS_ADDON_EVENTS, PHIS_CORE_CAPABILITIES, type PhisAddonManifestV1 } from "@phis/contracts/addon";
+import { PHIS_ADDON_EVENTS, PHIS_CORE_CAPABILITIES, PhisAddonInstallationFlag, type PhisAddonManifestV1 } from "@phis/contracts/addon";
 
 /**
  * The listeners of Core's commerce and user events, and what an installed-manifest reading yields.
@@ -8,12 +8,12 @@ import { PHIS_ADDON_EVENTS, PHIS_CORE_CAPABILITIES, type PhisAddonManifestV1 } f
  */
 export type PhisInstalledManifestEntries = Record<
   string,
-  { enabled: boolean; manifest: Pick<PhisAddonManifestV1, "eventHandlers" | "requiredCoreCapabilities"> }
+  { flags: number; manifest: Pick<PhisAddonManifestV1, "eventHandlers" | "requiredCoreCapabilities"> }
 >;
 
 function listenersOf(entries: PhisInstalledManifestEntries, event: string): string[] {
   return Object.entries(entries)
-    .filter(([, entry]) => entry.enabled && (entry.manifest.eventHandlers ?? []).some((handler) => handler.event === event))
+    .filter(([, entry]) => (entry.flags & PhisAddonInstallationFlag.Enabled) !== 0 && (entry.manifest.eventHandlers ?? []).some((handler) => handler.event === event))
     .map(([addonId]) => addonId);
 }
 

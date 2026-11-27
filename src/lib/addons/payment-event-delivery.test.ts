@@ -21,7 +21,7 @@ describe("owner Payment outbox delivery", () => {
     const manifest: PhisAddonManifestV1 = { manifestVersion: 1, addonId: "@test/consumer", packageName: "@test/consumer", packageVersion: "0.1.0", serverAbi: "^1",
       capabilities: [], serviceProviders: [], requiredCoreCapabilities: ["@phis/server/payments:v1"], apiRoutes: [], hooks: [], jobs: [], schema: null, migrationVersion: 0,
       eventHandlers: [{ id: "payment", event: "payment.changed", handler: "changed" }, { id: "thread", event: "thread.status.changed", handler: "changed" }, { id: "asset", event: "asset.changed", handler: "changed" }] };
-    state.entry = { enabled: true, manifest, manifestDigest: digestPhisAddonManifest(manifest), load: async () => ({ phisAddon: { manifest, eventHandlers: { changed: state.handler } } }) };
+    state.entry = { flags: 1, manifest, manifestDigest: digestPhisAddonManifest(manifest), load: async () => ({ phisAddon: { manifest, eventHandlers: { changed: state.handler } } }) };
     state.pending = [{ id: "receipt-1", siteId: 1, addonId: manifest.addonId, event: "payment.changed", subjectKind: "payment", paymentId: "payment-1", threadId: null,
       payload: { reference: "order-1", version: 3, operationId: "operation-1", refundId: null }, attempts: 0 }];
     state.active = true; state.lockHeld = false; state.handler.mockReset(); state.build.mockClear(); state.failed.mockClear(); state.delivered.mockClear();

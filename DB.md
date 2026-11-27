@@ -262,7 +262,14 @@ Contract:
 - `provider_id` is a namespaced service-provider id such as `@phis/server/storage-local` and is validated against the manifest-declared provider registry; an unavailable provider fails closed.
 - `secret_reference` names a secret in the server secret store (`phis.server_secrets`), for example `site:acme:addon:@phis/storage-s3:secret-access-key`. Credentials never live in this row, in Site administration, or in any browser payload.
 - `flags`: `1` Disabled (delivered from, never written into), `2` Cdn (a Site's CDN bucket, set by `phis storage add --cdn`; no Space may use it, Site administration does not list it, no CORS or lifecycle rule is written into it).
-- `probe` is what `phis storage probe` (or the first upload that needs it) found the endpoint can do, as `PhisMediaStorageProbe` from `@phis/contracts`: whether it is writable, which digests it verifies against the bytes it stores, and whether a digest survives a multipart object. It is an observation, not configuration, and every probe replaces the previous one. `probed_at` is `NULL` when nothing was recorded; a Local Profile is answered without a recorded probe.
+- `probe` is what `phis storage probe` (or the first upload that needs it) found the endpoint can do, as `PhisMediaStorageProbe` from `@phis/contracts`: whether it is writable (`flags`, `PhisMediaStorageProbeFlag.Writable`), which digests it verifies against the bytes it stores, and whether a digest survives a multipart object. It is an observation, not configuration, and every probe replaces the previous one. `probed_at` is `NULL` when nothing was recorded; a Local Profile is answered without a recorded probe.
+- Since phis-contracts 0.9 (owner, 2026-11-27) the probe carries `flags` instead of `writable: boolean`. An existing database rewrites the recorded probes by hand, as the serving role, rather than probing again (prod had 2 on 2026-11-27, the development database `phi_server_dev` received it so):
+
+  ```sql
+  UPDATE phis.media_storage_profiles
+     SET probe = (probe - 'writable') || jsonb_build_object('flags', CASE WHEN (probe->>'writable')::boolean THEN 1 ELSE 0 END)
+   WHERE probe ? 'writable';
+  ```
 - `checksum_algorithm` is the digest this Profile records, chosen once from the probe. Every Asset, variant, and font cut stored through the Profile records its digest under this algorithm, so digests within one Profile stay comparable.
 - Every Asset and every generated variant binds to a concrete profile. There is no global Storage switch and no persisted canonical public URL.
 
@@ -1774,8 +1781,26 @@ Contract:
 Contract:
 - What a Site has that somebody can hold (`products:v1`, SERVER_ADDONS.md; `design/COMMERCE_COORDINATION.md` section 4). An identity and nothing about how it is sold or delivered. The id an Add-on sees is `supplier_addon_id || ':' || key`; the supplier is the Add-on that registered it and delivers it, and no foreign key points at `server_addons`, because a product stays when its supplier is removed.
 - `publisher` is the supplier's own reference for whose product it is, NULL for the Site's own, and does not change after the row was written. A product with a publisher is released by the operator (flag `released`); the Site's own is derived as released whatever the bit says (it is set at creation).
-- `sale`, `referral_url`, the `free` and `account required` flags and `parts` are the terms in force. What a publisher asked to change of them on a released product waits in `pending_terms` (`{ sale, referralUrl, free, accountRequired, parts }`) until the operator releases it, which moves them into the columns and clears it. `parts` are product ids of the same Site; no cycle, counting `pending_terms.parts`; a bundle is not `counted`.
-- `flags` are `PHIS_PRODUCT_FLAG`: `1 = counted` (fixed once an entitlement names the product), `2 = free`, `4 = released`, `8 = withdrawn because the supplier was switched off` (cleared by any explicit move; Core restores exactly the products that carry it when the supplier is on again), `16 = declared by the supplier's manifest` (what lets Core withdraw it when a later manifest stops declaring it), `32 = account required` (Core does not enforce it: an entitlement entry always has a subject with an account).
+- `sale`, `referral_url`, the `free` and `account required` flags and `parts` are the terms in force. What a publisher asked to change of them on a released product waits in `pending_terms` until the operator releases it, which moves them into the columns and clears it. `pending_terms` is `PhisProductReleasedTerms` as `products:v1` answers it, `{ sale, referralUrl, flags, parts }`, its `flags` in `PhisProductFlag` bits and only those of `PHIS_PRODUCT_TERMS_FLAG_MASK` (`AccountRequired` 2, `Free` 4) -- the contract's bits, not the column's below. `parts` are product ids of the same Site; no cycle, counting `pending_terms.parts`; a bundle is not `counted`.
+- `flags` are `PHIS_PRODUCT_FLAG`: `1 = counted` (fixed once an entitlement names the product), `2 = free`, `4 = released`, `8 = withdrawn because the supplier was switched off` (cleared by any explicit move; Core restores exactly the products that carry it when the supplier is on again), `16 = declared by the supplier's manifest` (what lets Core withdraw it when a later manifest stops declaring it), `32 = account required` (Core does not enforce it: an entitlement entry always has a subject with an account). These are the column's own bits, kept as they were; `products:v1` answers `PhisProductFlag` (`Counted` 1, `AccountRequired` 2, `Free` 4, `Supplied` 8, `Released` 16), translated in `src/db/products.mts` alone: `Supplied` is never stored but read from the supplier's installation with the row, `Released` is the column's `released` bit or `publisher` NULL, and the two Core-only bits (supplier off, declared) are never answered.
+- Since phis-contracts 0.9 the answer's yes/no fields are `flags` (owner, 2026-11-27), so `pending_terms` changed its shape from `{ sale, referralUrl, free, accountRequired, parts }`. An existing database rewrites a pending row by hand, as the serving role (guarded: the count rewritten must be the count found; prod had none on 2026-11-27, the development database `phi_server_dev` none either):
+
+  ```sql
+  BEGIN;
+  DO $$
+  DECLARE expected INT; changed INT;
+  BEGIN
+    SELECT count(*) INTO expected FROM phis.products WHERE pending_terms ? 'free' OR pending_terms ? 'accountRequired';
+    UPDATE phis.products
+       SET pending_terms = (pending_terms - 'free' - 'accountRequired')
+         || jsonb_build_object('flags', (CASE WHEN (pending_terms->>'accountRequired')::boolean THEN 2 ELSE 0 END)
+                                      | (CASE WHEN (pending_terms->>'free')::boolean THEN 4 ELSE 0 END))
+     WHERE pending_terms ? 'free' OR pending_terms ? 'accountRequired';
+    GET DIAGNOSTICS changed = ROW_COUNT;
+    IF changed <> expected THEN RAISE EXCEPTION 'pending_terms: % rows rewritten, % expected', changed, expected; END IF;
+  END $$;
+  COMMIT;
+  ```
 - `state`: `draft`, `active`, `withdrawn`, `locked`. `locked` is the operator's; `phis product unlock` (or `POST /api/site/products/{id}/unlock`) takes the product to `withdrawn`, because the state before the lock is not kept.
 - `version` rises with every change, attribute changes included, and not with a write that changes nothing.
 - A product that was ever named by an `entitlements` row is never deleted; `entitlements.product` is no foreign key, so removal is decided by looking.

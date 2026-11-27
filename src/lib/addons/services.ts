@@ -1,4 +1,5 @@
 import "server-only";
+import { PhisAddonInstallationFlag } from "@phis/contracts/addon";
 
 import { getPhisAddonInstalledManifest } from "@/lib/addons/installed";
 import { isPhisAddonCapabilityDeliverable } from "@/lib/addons/core-capabilities";
@@ -90,7 +91,7 @@ export function listPhisServiceProviders(serviceKind: string) {
       providers.push({
         addonId,
         providerKey: descriptor.providerKey,
-        enabled: entry.enabled,
+        enabled: (entry.flags & PhisAddonInstallationFlag.Enabled) !== 0,
         interfaceCurrent: isPhisServiceInterfaceCurrent(
           descriptor.serviceKind,
           descriptor.interfaceDigest,
@@ -113,7 +114,7 @@ export async function resolvePhisServiceProvider(
   const { addonId, entry, descriptor } = found;
   const cacheKey = `${serviceKind}:${providerKey}:${entry.manifestDigest}`;
   const cached = resolvedProviders.get(cacheKey);
-  if (!entry.enabled) {
+  if ((entry.flags & PhisAddonInstallationFlag.Enabled) === 0) {
     throw new PhiServiceProviderUnavailableError(serviceKind, providerKey, `${addonId} is disabled`);
   }
   if (!isPhisServiceInterfaceCurrent(descriptor.serviceKind, descriptor.interfaceDigest)) {

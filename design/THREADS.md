@@ -441,7 +441,7 @@ which is what keeps the two projections from drifting again.
 PhisThreadKind, PhisThreadStatus, PhisThreadFlag, PhisThreadParticipantFlag,
 PhisThreadMessageFlag, PhisSiteThreadKindFlag
 
-PhisThreadSummary      id, kind, status, flags, subject, createdAt, updatedAt, latestMessageAt, unread
+PhisThreadSummary      id, kind, status, flags, subject, createdAt, updatedAt, latestMessageAt, readerFlags (Unread)
 PhisThreadParticipant  { kind: "user"; user: PhisUserProjection; flags }
                      | { kind: "group"; groupId; name; flags }
 PhisThreadMessageAuthor

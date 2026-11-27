@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { PhisProductFlag } from "@phis/contracts/products";
+
 import { isPhisProductId, isPhisProductKey, normalizePhisProductDraft, splitPhisProductId } from "./product-draft.ts";
 
 const base = { key: "pro", type: "licence", title: "Pro", summary: "One year" };
@@ -25,7 +27,7 @@ describe("a product's id and key", () => {
 describe("a product draft", () => {
   it("fills the defaults in", () => {
     expect(normalizePhisProductDraft(base)).toEqual({
-      ...base, publisher: null, description: "", link: null, sourceLocale: null, imageAssetId: null, iconAssetId: null, gallery: [], counted: false, sale: "own", referralUrl: null, free: false, accountRequired: false, parts: [],
+      ...base, publisher: null, description: "", link: null, sourceLocale: null, imageAssetId: null, iconAssetId: null, gallery: [], sale: "own", referralUrl: null, flags: 0, parts: [],
     });
   });
 
@@ -73,13 +75,19 @@ describe("a product draft", () => {
     expect(() => normalizePhisProductDraft({ ...base, parts: [part, part] })).toThrow(/twice/);
     expect(() => normalizePhisProductDraft({ ...base, parts: ["part"] as never })).toThrow(/parts/);
     expect(() => normalizePhisProductDraft({ ...base, parts: ["@acme/licenses:pro"] }, "@acme/licenses:pro")).toThrow(/part of itself/);
-    expect(() => normalizePhisProductDraft({ ...base, counted: true, parts: [part] })).toThrow(/not counted/);
+    expect(() => normalizePhisProductDraft({ ...base, flags: PhisProductFlag.Counted, parts: [part] })).toThrow(/not counted/);
   });
 
-  it("takes whether an account is required, false when absent", () => {
-    expect(normalizePhisProductDraft({ ...base, accountRequired: true }).accountRequired).toBe(true);
-    expect(normalizePhisProductDraft({ ...base, accountRequired: false }).accountRequired).toBe(false);
-    expect(() => normalizePhisProductDraft({ ...base, accountRequired: "yes" as never })).toThrow(/accountRequired/);
+  it("takes the supplier's flags, none when absent, and refuses Core's bits", () => {
+    expect(normalizePhisProductDraft({ ...base, flags: PhisProductFlag.AccountRequired }).flags).toBe(PhisProductFlag.AccountRequired);
+    expect(normalizePhisProductDraft(base).flags).toBe(0);
+    expect(normalizePhisProductDraft({ ...base, flags: PhisProductFlag.Free | PhisProductFlag.Counted }).flags)
+      .toBe(PhisProductFlag.Free | PhisProductFlag.Counted);
+    expect(() => normalizePhisProductDraft({ ...base, flags: PhisProductFlag.Released })).toThrow(/flags/);
+    expect(() => normalizePhisProductDraft({ ...base, flags: PhisProductFlag.Supplied })).toThrow(/flags/);
+    expect(() => normalizePhisProductDraft({ ...base, flags: "yes" as never })).toThrow(/flags/);
+    expect(() => normalizePhisProductDraft({ ...base, free: true } as never)).toThrow(/free is no longer read/);
+    expect(() => normalizePhisProductDraft({ ...base, counted: false } as never)).toThrow(/counted is no longer read/);
   });
 
   it("refuses the wrong shapes", () => {
@@ -87,7 +95,7 @@ describe("a product draft", () => {
     expect(() => normalizePhisProductDraft({ ...base, sale: "gift" as never })).toThrow(/sale/);
     expect(() => normalizePhisProductDraft({ ...base, title: "" })).toThrow(/title/);
     expect(() => normalizePhisProductDraft({ ...base, type: "x".repeat(65) })).toThrow(/type/);
-    expect(() => normalizePhisProductDraft({ ...base, counted: "yes" as never })).toThrow(/counted/);
+    expect(() => normalizePhisProductDraft({ ...base, flags: 1.5 })).toThrow(/flags/);
     expect(() => normalizePhisProductDraft({ ...base, imageAssetId: 0 })).toThrow(/imageAssetId/);
     expect(() => normalizePhisProductDraft({ ...base, iconAssetId: 1.5 })).toThrow(/iconAssetId/);
     expect(() => normalizePhisProductDraft({ ...base, iconAssetId: -2 })).toThrow(/iconAssetId/);

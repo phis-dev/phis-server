@@ -1,7 +1,7 @@
 import "server-only";
 
 import { choosePhisMediaChecksumAlgorithm } from "@phis/contracts/addon";
-import type { PhisMediaStorageProbe } from "@phis/contracts/addon";
+import { PhisMediaStorageProbeFlag, type PhisMediaStorageProbe } from "@phis/contracts/addon";
 
 import {
   readMediaStorageProfileProbe,
@@ -21,7 +21,7 @@ import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
  * Local Profile's `probed_at` empty, which is the same thing the operator command reports about it.
  */
 const LOCAL_PROBE: PhisMediaStorageProbe = {
-  writable: true,
+  flags: PhisMediaStorageProbeFlag.Writable,
   verifiedAlgorithms: [],
   findings: ["Core's own storage: nothing is delivered to it by a client, so there is nothing to verify."],
 };
@@ -81,7 +81,7 @@ export async function ensurePhiMediaStorageProfileProbe(
     // A Provider that cannot be built or refuses outright is an answer too, and it is the answer that
     // keeps the upload on the path that does not depend on the endpoint checking anything.
     probe = {
-      writable: false,
+      flags: 0,
       verifiedAlgorithms: [],
       findings: [`The Provider could not be reached: ${
         error instanceof Error ? error.message.trim() : "no reason given"
@@ -112,7 +112,7 @@ export async function ensurePhiMediaStorageProfileProbe(
     meta: {
       storageProfileId: profile.id,
       providerId: profile.providerId,
-      writable: probe.writable,
+      writable: (probe.flags & PhisMediaStorageProbeFlag.Writable) !== 0,
       verifiedAlgorithms: probe.verifiedAlgorithms.join(",") || "none",
       chosenAlgorithm: chosenAlgorithm ?? "none",
       findings: probe.findings.length,

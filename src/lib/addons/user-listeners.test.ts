@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { PHIS_CORE_CAPABILITIES } from "@phis/contracts/addon";
+import { PHIS_CORE_CAPABILITIES, PhisAddonInstallationFlag } from "@phis/contracts/addon";
 
 import { listUserListenersOf } from "./commerce-listeners.ts";
 
 /** A person's events reach an Add-on that may read people at all, never one that merely listens. */
 describe("user event listeners", () => {
   const entry = (enabled: boolean, required: string[], events: string[]) => ({
-    enabled,
+    flags: enabled ? PhisAddonInstallationFlag.Enabled : 0,
     manifest: { requiredCoreCapabilities: required, eventHandlers: events.map((event) => ({ id: event, event, handler: event })) },
   });
 

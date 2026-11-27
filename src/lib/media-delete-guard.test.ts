@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   getPool: vi.fn(),
   productIds: vi.fn(),
   addonRows: vi.fn(),
-  installed: {} as Record<string, { enabled: boolean; manifest: unknown }>,
+  installed: {} as Record<string, { flags: number; manifest: unknown }>,
 }));
 
 vi.mock("@/lib/db", () => ({ getPool: mocks.getPool }));
@@ -66,7 +66,7 @@ const assetReference = (name: string, onDelete: "cascade" | "setNull" = "setNull
 function installAddons() {
   mocks.installed = {
     "@acme/shop": {
-      enabled: true,
+      flags: 1,
       manifest: {
         addonId: "@acme/shop",
         packageName: "@acme/shop-addon",
@@ -102,14 +102,14 @@ function installAddons() {
     },
     // Switched off, and still holding rows that point at the Asset.
     "@acme/off": {
-      enabled: false,
+      flags: 0,
       manifest: {
         addonId: "@acme/off",
         packageName: "@acme/off",
         schema: { version: 1, tables: [{ name: "logos", siteScoped: true, primaryKey: ["id"], columns: [{ name: "id", type: "identity" }, assetReference("logo")] }] },
       },
     },
-    "@acme/tableless": { enabled: true, manifest: { addonId: "@acme/tableless", packageName: "@acme/tableless" } },
+    "@acme/tableless": { flags: 1, manifest: { addonId: "@acme/tableless", packageName: "@acme/tableless" } },
   };
 }
 

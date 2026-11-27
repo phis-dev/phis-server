@@ -12,6 +12,7 @@ import {
   PHIS_ADDON_JOB_INTERVALS,
   PHIS_ADDON_MANIFEST_VERSION,
   PHIS_SITE_ACCESS,
+  PhisAddonInstallationFlag,
   type PhisAddonApiRouteDescriptor,
   type PhisAddonDesiredState,
   type PhisAddonHookDescriptor,
@@ -1217,8 +1218,12 @@ export function validatePhisAddonDesiredState(
     if (artifactDigest && !DIGEST_PATTERN.test(artifactDigest)) {
       issues.push(`addons[${index}].artifactDigest must be a SHA-256 digest.`);
     }
-    if (typeof addon.enabled !== "boolean") {
-      issues.push(`addons[${index}].enabled must be boolean.`);
+    if (typeof addon.flags !== "number" || !Number.isInteger(addon.flags) || addon.flags < 0
+      || (addon.flags & ~PhisAddonInstallationFlag.Enabled) !== 0) {
+      issues.push(`addons[${index}].flags must be a PhisAddonInstallationFlag bit mask (Enabled = 1).`);
+    }
+    if ("enabled" in addon) {
+      issues.push(`addons[${index}].enabled is no longer read; the entry carries flags (PhisAddonInstallationFlag.Enabled).`);
     }
 
     // The descriptors are cached here so the server does not have to evaluate an artifact to learn

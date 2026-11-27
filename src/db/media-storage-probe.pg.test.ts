@@ -60,11 +60,11 @@ describe("a Storage Profile's recorded probe", () => {
     const id = await createProfile("probed");
     await pool.query(
       `UPDATE phis.media_storage_profiles SET probe = $2::jsonb, probed_at = NOW() WHERE id = $1`,
-      [id, JSON.stringify({ writable: true, verifiesSha256: true, findings: [] })],
+      [id, JSON.stringify({ flags: 1, verifiesSha256: true, findings: [] })],
     );
 
     const { rows } = await pool.query<{
-      probe: { writable: boolean; verifiesSha256: boolean; findings: string[] };
+      probe: { flags: number; verifiesSha256: boolean; findings: string[] };
       probed_at: Date;
     }>(
       `SELECT probe, probed_at FROM phis.media_storage_profiles WHERE id = $1`,
@@ -80,7 +80,7 @@ describe("a Storage Profile's recorded probe", () => {
     await pool.query(
       `UPDATE phis.media_storage_profiles SET probe = $2::jsonb, probed_at = NOW() WHERE id = $1`,
       [id, JSON.stringify({
-        writable: true,
+        flags: 1,
         verifiesSha256: false,
         findings: ["This endpoint accepted an object whose declared SHA-256 does not match its bytes."],
       })],

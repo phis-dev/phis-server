@@ -1,4 +1,5 @@
 import "server-only";
+import { PhisAddonInstallationFlag } from "@phis/contracts/addon";
 
 import { readPhisAddonCapabilityStates, type PhisAddonCapabilityState } from "@/db/server-addons";
 import {
@@ -81,7 +82,7 @@ function readClashingAddonIds(manifest: ReturnType<typeof getPhisAddonInstalledM
 export function listPhisSnapshotAddonIds(manifest = getPhisAddonInstalledManifest()) {
   const clashing = readClashingAddonIds(manifest);
   return Object.entries(manifest)
-    .filter(([addonId, entry]) => entry.enabled && !clashing.has(addonId))
+    .filter(([addonId, entry]) => (entry.flags & PhisAddonInstallationFlag.Enabled) !== 0 && !clashing.has(addonId))
     .map(([addonId]) => addonId)
     .sort();
 }
@@ -111,7 +112,7 @@ export function composePhisCapabilitySnapshot(
     let state: PhiCapabilityState = "available";
     let diagnosticCode: string | null = null;
 
-    if (!entry.enabled) {
+    if ((entry.flags & PhisAddonInstallationFlag.Enabled) === 0) {
       state = "disabled";
       diagnosticCode = "build_disabled";
     } else if (clashing.has(addonId)) {

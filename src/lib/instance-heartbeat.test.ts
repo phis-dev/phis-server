@@ -72,7 +72,7 @@ describe("buildPhisInstanceReport", () => {
   it("reports the version on disk and the capabilities that version declares", () => {
     vi.mocked(getPhisAddonInstalledManifest).mockReturnValue({
       "@acme/status": {
-        enabled: true,
+        flags: 1,
         manifestDigest: "b".repeat(64),
         manifest: {
           packageVersion: "2.1.0",

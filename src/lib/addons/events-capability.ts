@@ -1,4 +1,5 @@
 import "server-only";
+import { PhisAddonInstallationFlag } from "@phis/contracts/addon";
 
 import { PHIS_ADDON_EVENT_MAX_HOPS } from "@phis/contracts/addon";
 
@@ -70,7 +71,7 @@ export function listPhisAddonEventListeners(
 ): string[] {
   const listeners: string[] = [];
   for (const [addonId, entry] of Object.entries(getPhisAddonInstalledManifest())) {
-    if (!entry.enabled) continue;
+    if ((entry.flags & PhisAddonInstallationFlag.Enabled) === 0) continue;
     if (descriptor.audience === "self" && addonId !== emitter) continue;
     if ((entry.manifest.eventHandlers ?? []).some((handler) => handler.event === event)) {
       listeners.push(addonId);

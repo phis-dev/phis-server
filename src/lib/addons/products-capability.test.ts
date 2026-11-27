@@ -4,7 +4,7 @@ vi.mock("server-only", () => ({}));
 
 const state = vi.hoisted(() => ({
   deliver: vi.fn(),
-  installed: {} as Record<string, { enabled: boolean; manifest: { eventHandlers?: { event: string }[] } }>,
+  installed: {} as Record<string, { flags: number; manifest: { eventHandlers?: { event: string }[] } }>,
   list: vi.fn(async (input: Record<string, unknown>): Promise<unknown> => ({ products: [], nextCursor: null, input })),
   read: vi.fn(async (...args: unknown[]): Promise<unknown> => ({ args })),
   register: vi.fn(async (input: Record<string, unknown>): Promise<unknown> => ({ product: { id: "p", galleryMedia: [] }, outcome: "created", input })),
@@ -53,9 +53,9 @@ function capability(overrides: Partial<Parameters<typeof buildPhisAddonProductsC
 describe("products capability", () => {
   beforeEach(() => {
     state.installed = {
-      "@acme/licenses": { enabled: true, manifest: { eventHandlers: [{ event: "entitlement.changed" }] } },
-      "@acme/shop": { enabled: true, manifest: { eventHandlers: [{ event: "product.changed" }, { event: "entitlement.changed" }] } },
-      "@acme/off": { enabled: false, manifest: { eventHandlers: [{ event: "product.changed" }] } },
+      "@acme/licenses": { flags: 1, manifest: { eventHandlers: [{ event: "entitlement.changed" }] } },
+      "@acme/shop": { flags: 1, manifest: { eventHandlers: [{ event: "product.changed" }, { event: "entitlement.changed" }] } },
+      "@acme/off": { flags: 0, manifest: { eventHandlers: [{ event: "product.changed" }] } },
     };
   });
 

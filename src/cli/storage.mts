@@ -413,7 +413,8 @@ export type StorageProfileProbeResult = {
   key: string;
   providerId: string;
   probed: boolean;
-  writable?: boolean;
+  /** `PhisMediaStorageProbeFlag`; absent where nothing was probed. */
+  flags?: number;
   verifiedAlgorithms?: string[];
   chosenAlgorithm?: string | null;
   findings: string[];
@@ -453,7 +454,7 @@ export async function probeOneStorageProfile(
     // A Provider that cannot be built or refuses outright is an answer, and the operator wants it
     // recorded next to the ones that answered rather than losing the whole run to it.
     probe = {
-      writable: false,
+      flags: 0,
       verifiedAlgorithms: [],
       findings: [`The Provider could not be reached: ${
         error instanceof Error ? error.message.trim() : "no reason given"

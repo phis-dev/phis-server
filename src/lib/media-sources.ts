@@ -9,6 +9,7 @@ import {
   PHIS_MEDIA_SOURCE_QUERY_MAX_LENGTH,
   PHIS_MEDIA_SOURCE_TAKE_MAX_BYTES,
   PHIS_MEDIA_SOURCE_TEXT_MAX_LENGTH,
+  PhisMediaSourceProbeFlag,
   type PhisMediaSourceAdapterV1,
   type PhisMediaSourceItem,
   type PhisMediaSourceKind,
@@ -181,7 +182,7 @@ const isNonEmptyString = (value: unknown, max: number): value is string =>
 
 /** The probe's answer as the contract states it, or null where it does not hold. */
 function readProbe(value: unknown): PhisMediaSourceProbe | null {
-  if (!isRecord(value) || typeof value.usable !== "boolean" || !Array.isArray(value.sources)) return null;
+  if (!isRecord(value) || typeof value.flags !== "number" || !Number.isInteger(value.flags) || value.flags < 0 || !Array.isArray(value.sources)) return null;
   if (!Array.isArray(value.findings) || value.findings.some((finding) => typeof finding !== "string")) return null;
   const sources: PhisMediaSourceProbe["sources"] = [];
   for (const entry of value.sources) {
@@ -189,14 +190,14 @@ function readProbe(value: unknown): PhisMediaSourceProbe | null {
     if (!isNonEmptyString(entry.label, PHIS_MEDIA_SOURCE_TEXT_MAX_LENGTH)) return null;
     sources.push({ key: entry.key, label: entry.label });
   }
-  return { usable: value.usable, sources, findings: value.findings as string[] };
+  return { flags: value.flags, sources, findings: value.findings as string[] };
 }
 
 async function probe(site: Site, target: MediaSourceTarget) {
   try {
     const answer = readProbe(await target.adapter.probe({ signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) }));
     if (!answer) throw new Error("The probe answered something that is not a media source probe.");
-    if (!answer.usable) {
+    if ((answer.flags & PhisMediaSourceProbeFlag.Usable) === 0) {
       logRuntimeEvent("warn", "media.source.unusable", {
         message: "A media source add-on says it cannot be used on this Site.",
         siteKey: site.key,
@@ -235,7 +236,7 @@ function parseMediaSource(value: string) {
 
 /**
  * The sources this Site is offered right now: every source of every implementation that resolves here
- * and answers its probe with `usable`, by the name the implementation gives it.
+ * and answers its probe with `Usable`, by the name the implementation gives it.
  */
 export async function listMediaSources(site: Site) {
   const implementations = await targetSource(site);
@@ -243,7 +244,7 @@ export async function listMediaSources(site: Site) {
     implementations.map(async (implementation) => ({ implementation, answer: await probe(site, implementation) })),
   );
   return probed.flatMap(({ implementation, answer }) =>
-    answer?.usable
+    answer && (answer.flags & PhisMediaSourceProbeFlag.Usable) !== 0
       ? answer.sources.map((source) => ({
         source: formatMediaSource(implementation.providerKey, source.key),
         label: source.label,
@@ -264,7 +265,7 @@ async function resolveSource(site: Site, address: string) {
   if (!answer) {
     throw new MediaSourceError("media_source_failed", "The media source did not answer.");
   }
-  if (!answer.usable) {
+  if ((answer.flags & PhisMediaSourceProbeFlag.Usable) === 0) {
     throw new MediaSourceError("media_source_unusable", "That media source cannot be used right now.");
   }
   const place = answer.sources.find((candidate) => candidate.key === chosen.key);

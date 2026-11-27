@@ -24,6 +24,7 @@ import {
 } from "../db/server-addon-reconcile.mts";
 
 import {
+  PhisAddonInstallationFlag,
   type PhisAddonDesiredState,
   type PhisAddonManifestV1,
 } from "../lib/addons/contract.ts";
@@ -505,7 +506,7 @@ export async function installAddon(root: string, flags: FlagMap) {
           manifestDigest,
           artifactDigest,
           manifest,
-          enabled: false,
+          flags: 0,
         },
       ],
     });
@@ -523,7 +524,7 @@ export async function installAddon(root: string, flags: FlagMap) {
       packageVersion: manifest.packageVersion,
       manifestDigest,
       artifactDigest,
-      enabled: false,
+      flags: 0,
     },
     artifact: target,
     ...describeAddonAuthority(manifest.addonId, manifest),
@@ -629,7 +630,7 @@ export async function upgradeAddon(root: string, flags: FlagMap) {
     previousArtifactKept:
       previous.packageVersion === manifest.packageVersion ? null : previous.directory,
     schemaChanged: manifest.migrationVersion > existing.manifest.migrationVersion,
-    enabled: existing.enabled,
+    flags: existing.flags,
     pendingRegistryReconciliation: true,
     // The whole list for the new build rather than what changed: the operator agrees to what will run.
     ...describeAddonAuthority(addonId, manifest),
@@ -655,7 +656,7 @@ export async function removeAddon(root: string, flags: FlagMap) {
   if (!existing) {
     throw new Error(`Add-on ${addonId} is not installed.`);
   }
-  if (existing.enabled) {
+  if ((existing.flags & PhisAddonInstallationFlag.Enabled) !== 0) {
     throw new Error(`Disable Add-on ${addonId} before removing it.`);
   }
 
@@ -738,7 +739,11 @@ export async function setAddonEnabled(
   }
 
   const addons = [...state.addons];
-  addons[index] = { ...addons[index], enabled };
+  const previous = addons[index]!;
+  addons[index] = {
+    ...previous,
+    flags: enabled ? previous.flags | PhisAddonInstallationFlag.Enabled : previous.flags & ~PhisAddonInstallationFlag.Enabled,
+  };
   writeAddonDesiredState(root, { formatVersion: 1, addons });
 
   return {
@@ -774,8 +779,8 @@ export async function reconcileAddons(
   for (const { desired } of loaded) {
     await recordPhisAddonSiteEffectiveStatus(pool, {
       addonId: desired.addonId,
-      status: desired.enabled ? "available" : "disabled",
-      diagnosticCode: desired.enabled ? null : "globally_disabled",
+      status: (desired.flags & PhisAddonInstallationFlag.Enabled) !== 0 ? "available" : "disabled",
+      diagnosticCode: (desired.flags & PhisAddonInstallationFlag.Enabled) !== 0 ? null : "globally_disabled",
     });
   }
 
@@ -809,11 +814,11 @@ export async function reconcileAddons(
    * products, one switched on again gets them back. Nothing is removed.
    */
   const productEntries = Object.fromEntries(
-    loaded.map(({ desired, manifest }) => [desired.addonId, { enabled: desired.enabled, manifest }]),
+    loaded.map(({ desired, manifest }) => [desired.addonId, { flags: desired.flags, manifest }]),
   );
   const products: Array<{ addonId: string; siteId: number; key: string; action: string; message?: string }> = [];
   for (const { desired, manifest } of loaded) {
-    if (!desired.enabled) {
+    if ((desired.flags & PhisAddonInstallationFlag.Enabled) === 0) {
       continue;
     }
     for (const siteId of await readPhisAddonEnabledSiteIds(pool, desired.addonId)) {

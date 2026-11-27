@@ -165,7 +165,7 @@ export async function resolveTranslationAddonAdapter(): Promise<PhisTranslationA
  * What the selected Provider can do, asked when an installation wants to offer a choice.
  *
  * Null for an installation with nothing resolvable, and null for a probe that throws -- a Provider is
- * supposed to answer `usable: false` with a finding instead, and one that throws has said the same thing
+ * supposed to answer without `Usable` with a finding instead, and one that throws has said the same thing
  * less clearly. Nothing is cached here: the caller decides how long an answer stays true, because the
  * answer is about a service somewhere else.
  */

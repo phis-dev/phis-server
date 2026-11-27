@@ -1,6 +1,6 @@
 import "server-only";
 
-import { PHIS_MEDIA_GET_MAX_IDS, type PhisMediaAssetV1, type PhisMediaCapabilityV1 } from "./contract.ts";
+import { PHIS_MEDIA_GET_MAX_IDS, PhisMediaAssetV1Flag, type PhisMediaAssetV1, type PhisMediaCapabilityV1 } from "./contract.ts";
 import { listAddonReachMediaAssetsByIds, type MediaAssetRecord } from "@/db/media";
 import { PhiMediaDeliveryPolicy, PhiMediaLifecycleStatus } from "@/db/media-spaces";
 import { resolvePhiMediaDeliveryUrl, resolvePhiMediaPreviewUrl, resolvePhiMediaThumbnailUrl } from "@/lib/media-response";
@@ -10,7 +10,7 @@ import { resolvePhiMediaDeliveryUrl, resolvePhiMediaPreviewUrl, resolvePhiMediaT
  *
  * Bound to the Site and to the calling Add-on. What is in reach is what `products:v1` takes as a
  * picture -- the Site's Space and this Add-on's own Add-on Space -- and the reader asks for exactly that,
- * so an Asset out of reach is absent rather than refused. `servable` is the rest of that check: ready and
+ * so an Asset out of reach is absent rather than refused. `Servable` is the rest of that check: ready and
  * delivered publicly. The path is Core's one Media address, the builder `products:v1` uses for `imagePath`;
  * the thumbnail and preview paths are the ones the Media library's own listing gives, from the same
  * builders, and like `path` only for a servable Asset.
@@ -33,7 +33,7 @@ function present(asset: MediaAssetRecord): PhisMediaAssetV1 {
     width: asset.width,
     height: asset.height,
     alt: asset.altText,
-    servable,
+    flags: servable ? PhisMediaAssetV1Flag.Servable : 0,
     path: servable ? resolvePhiMediaDeliveryUrl(asset) : null,
     thumbnailPath: servable ? resolvePhiMediaThumbnailUrl(asset) : null,
     previewPath: servable ? resolvePhiMediaPreviewUrl(asset) : null,
@@ -66,7 +66,7 @@ export function buildPhisAddonMediaCapability(input: {
       );
       return order.flatMap((id) => {
         const asset = found.get(id);
-        return asset && (asset.servable || input.unauthenticated !== true) ? [asset] : [];
+        return asset && ((asset.flags & PhisMediaAssetV1Flag.Servable) !== 0 || input.unauthenticated !== true) ? [asset] : [];
       });
     },
   } satisfies PhisMediaCapabilityV1);

@@ -33,7 +33,7 @@ const entry = vi.hoisted(() => {
     hookHandlers: { ping: respond("hook") },
     commandHandlers: { showDay: (context: { site: unknown }) => { state.seen.push({ kind: "command", site: context.site }); return null; } },
   };
-  return { enabled: true, manifest, manifestDigest: "digest", load: async () => ({ phisAddon }) };
+  return { flags: 1, manifest, manifestDigest: "digest", load: async () => ({ phisAddon }) };
 });
 
 vi.mock("@/lib/addons/installed", () => ({

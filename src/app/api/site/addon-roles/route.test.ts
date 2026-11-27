@@ -68,7 +68,7 @@ describe("granting an Add-on role", () => {
     vi.clearAllMocks();
     mocks.context.mockResolvedValue({ context: { site: { id: 7, key: "site" }, session: { userId: 1 } }, error: null });
     mocks.installed.mockReturnValue({
-      [ADDON]: { enabled: true, manifest: { addonId: ADDON, roles: [{ name: "vendor", grantableBy: { siteAccess: "site-admin" } }] } },
+      [ADDON]: { flags: 1, manifest: { addonId: ADDON, roles: [{ name: "vendor", grantableBy: { siteAccess: "site-admin" } }] } },
     });
     mocks.available.mockResolvedValue(new Set([ADDON]));
     mocks.membership.mockResolvedValue({ userId: 42, siteId: 7 });
@@ -129,9 +129,9 @@ describe("the Add-on role catalog", () => {
     vi.clearAllMocks();
     mocks.context.mockResolvedValue({ context: { site: { id: 7, key: "site" }, session: { userId: 1 } }, error: null });
     mocks.installed.mockReturnValue({
-      [ADDON]: { enabled: true, manifest: { addonId: ADDON, roles: LADDER } },
+      [ADDON]: { flags: 1, manifest: { addonId: ADDON, roles: LADDER } },
       // Enabled, but not available on the Site: its roles do not count here.
-      "@test/off": { enabled: true, manifest: { addonId: "@test/off", roles: [{ name: "x", grantableBy: { siteAccess: "site-admin" } }] } },
+      "@test/off": { flags: 1, manifest: { addonId: "@test/off", roles: [{ name: "x", grantableBy: { siteAccess: "site-admin" } }] } },
     });
     mocks.available.mockResolvedValue(new Set([ADDON]));
     mocks.actorClaims.mockReturnValue(ADMIN_CLAIMS);
@@ -192,8 +192,8 @@ describe("setting the roles one person holds in an Add-on", () => {
     vi.clearAllMocks();
     mocks.context.mockResolvedValue({ context: { site: { id: 7, key: "site" }, session: { userId: 1 } }, error: null });
     mocks.installed.mockReturnValue({
-      [ADDON]: { enabled: true, manifest: { addonId: ADDON, roles: LADDER } },
-      "@test/off": { enabled: true, manifest: { addonId: "@test/off", roles: [{ name: "x", grantableBy: { siteAccess: "site-admin" } }] } },
+      [ADDON]: { flags: 1, manifest: { addonId: ADDON, roles: LADDER } },
+      "@test/off": { flags: 1, manifest: { addonId: "@test/off", roles: [{ name: "x", grantableBy: { siteAccess: "site-admin" } }] } },
     });
     mocks.available.mockResolvedValue(new Set([ADDON]));
     mocks.membership.mockResolvedValue({ userId: 42, siteId: 7 });
@@ -294,7 +294,7 @@ describe("the roles a Site access implies", () => {
     vi.clearAllMocks();
     mocks.realAccess.value = true;
     mocks.context.mockResolvedValue({ context: { site: { id: 7, key: "site" }, session: { userId: 1 } }, error: null });
-    mocks.installed.mockReturnValue({ [ADDON]: { enabled: true, manifest: { addonId: ADDON, roles: BOOKS } } });
+    mocks.installed.mockReturnValue({ [ADDON]: { flags: 1, manifest: { addonId: ADDON, roles: BOOKS } } });
     mocks.available.mockResolvedValue(new Set([ADDON]));
     mocks.membership.mockResolvedValue({ userId: 42, siteId: 7 });
     // Caller 1 is a Site Admin; person 42 an Accountant with `auditor` and `clerk` stored.

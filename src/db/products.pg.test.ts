@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { Pool } from "pg";
 
-import type { PhisProductDraft, PhisProductId } from "@phis/contracts/products";
+import { PhisProductFlag as F, type PhisProductDraft, type PhisProductId } from "@phis/contracts/products";
 import { createPhiPageReference } from "@phis/contracts/references";
 
 import {
@@ -107,8 +107,8 @@ describe.skipIf(!configured)("products", () => {
     const first = await register("idem", { publisher: null }, SUPPLIER, listeners);
     expect(first.outcome).toBe("created");
     expect(first.product).toMatchObject({
-      id: id(SUPPLIER, "idem"), supplier: SUPPLIER, supplied: true, publisher: null, state: "draft", released: true,
-      pendingTerms: null, sale: "own", free: false, counted: false, parts: [], attributes: {}, version: 1,
+      id: id(SUPPLIER, "idem"), supplier: SUPPLIER, publisher: null, state: "draft",
+      flags: F.Supplied | F.Released, pendingTerms: null, sale: "own", parts: [], attributes: {}, version: 1,
     });
     expect((await outbox()).map((row) => row.addon_id)).toEqual([READY]);
 
@@ -117,9 +117,9 @@ describe.skipIf(!configured)("products", () => {
     expect(second.product).toEqual(first.product);
     expect(await outbox()).toHaveLength(1);
 
-    const changed = await register("idem", { title: "Another title", free: true }, SUPPLIER, listeners);
+    const changed = await register("idem", { title: "Another title", flags: F.Free }, SUPPLIER, listeners);
     expect(changed.outcome).toBe("updated");
-    expect(changed.product).toMatchObject({ title: "Another title", free: true, version: 2, state: "draft" });
+    expect(changed.product).toMatchObject({ title: "Another title", flags: F.Supplied | F.Released | F.Free, version: 2, state: "draft" });
     expect(await outbox()).toHaveLength(2);
   });
 
@@ -147,11 +147,11 @@ describe.skipIf(!configured)("products", () => {
   it("changes every term at once before a publisher's product is released, and refuses it active", async () => {
     await register("pre", { publisher: "acme", sale: "own" });
     const before = await get(id(SUPPLIER, "pre"));
-    expect(before).toMatchObject({ released: false, pendingTerms: null });
+    expect(before).toMatchObject({ flags: F.Supplied, pendingTerms: null });
     await expect(state("pre", "active")).rejects.toThrow(/not released/);
 
-    const changed = await register("pre", { publisher: "acme", sale: "referral", referralUrl: "https://acme.example/shop", free: true });
-    expect(changed.product).toMatchObject({ sale: "referral", referralUrl: "https://acme.example/shop", free: true, pendingTerms: null, released: false });
+    const changed = await register("pre", { publisher: "acme", sale: "referral", referralUrl: "https://acme.example/shop", flags: F.Free });
+    expect(changed.product).toMatchObject({ sale: "referral", referralUrl: "https://acme.example/shop", flags: F.Supplied | F.Free, pendingTerms: null });
     // Draft and withdrawn are allowed; only active needs the release.
     expect((await state("pre", "withdrawn"))!.state).toBe("withdrawn");
   });
@@ -159,26 +159,26 @@ describe.skipIf(!configured)("products", () => {
   it("holds changed terms of a released product as pendingTerms until the operator releases them", async () => {
     await clearOutbox();
     await register("rel", { publisher: "acme", sale: "own", type: "licence" });
-    expect((await releaseProduct(pool, { siteId: site.id, productId: id(SUPPLIER, "rel"), listeners }))).toMatchObject({ outcome: "released", product: { released: true, pendingTerms: null } });
+    expect((await releaseProduct(pool, { siteId: site.id, productId: id(SUPPLIER, "rel"), listeners }))).toMatchObject({ outcome: "released", product: { flags: F.Supplied | F.Released, pendingTerms: null } });
     expect((await state("rel", "active"))!.state).toBe("active");
     expect((await outbox()).length).toBeGreaterThan(0);
 
-    // Title, summary, type and picture change at once; sale, referralUrl, free and parts wait.
-    const asked = await register("rel", { publisher: "acme", sale: "payout", free: true, title: "Renamed", type: "plan" });
+    // Title, summary, type and picture change at once; sale, referralUrl, Free and parts wait.
+    const asked = await register("rel", { publisher: "acme", sale: "payout", flags: F.Free, title: "Renamed", type: "plan" });
     expect(asked.product).toMatchObject({
-      title: "Renamed", type: "plan", sale: "own", free: false, referralUrl: null, parts: [],
-      pendingTerms: { sale: "payout", referralUrl: null, free: true, parts: [] }, released: true, state: "active",
+      title: "Renamed", type: "plan", sale: "own", flags: F.Supplied | F.Released, referralUrl: null, parts: [],
+      pendingTerms: { sale: "payout", referralUrl: null, flags: F.Free, parts: [] }, state: "active",
     });
     const version = asked.product.version;
     // The same draft again changes nothing, though jsonb stores the pending terms in its own key order.
-    const again = await register("rel", { publisher: "acme", sale: "payout", free: true, title: "Renamed", type: "plan" });
+    const again = await register("rel", { publisher: "acme", sale: "payout", flags: F.Free, title: "Renamed", type: "plan" });
     expect(again.outcome).toBe("unchanged");
     expect(again.product.version).toBe(version);
 
     // Asking for the terms in force again takes the request back.
     const back = await register("rel", { publisher: "acme", title: "Renamed", type: "plan" });
     expect(back.product.pendingTerms).toBeNull();
-    await register("rel", { publisher: "acme", sale: "payout", free: true, title: "Renamed", type: "plan" });
+    await register("rel", { publisher: "acme", sale: "payout", flags: F.Free, title: "Renamed", type: "plan" });
 
     // A release of the version the operator read, where the product has moved on since, releases nothing.
     const read = (await get(id(SUPPLIER, "rel")))!;
@@ -189,24 +189,24 @@ describe.skipIf(!configured)("products", () => {
     expect(await outbox()).toHaveLength(0);
 
     const applied = await releaseProduct(pool, { siteId: site.id, productId: id(SUPPLIER, "rel"), listeners, expectedVersion: read.version });
-    expect(applied).toMatchObject({ outcome: "applied", product: { sale: "payout", free: true, pendingTerms: null } });
+    expect(applied).toMatchObject({ outcome: "applied", product: { sale: "payout", flags: F.Supplied | F.Released | F.Free, pendingTerms: null } });
     expect(await outbox()).toHaveLength(1);
     expect((await releaseProduct(pool, { siteId: site.id, productId: id(SUPPLIER, "rel"), listeners }))!.outcome).toBe("unchanged");
   });
 
   it("keeps whether an account is required with the terms: at once before the release, pending after it", async () => {
-    expect((await register("acct-own")).product.accountRequired).toBe(false);
-    expect((await register("acct-own", { accountRequired: true })).product.accountRequired).toBe(true);
-    expect((await register("acct-own", { accountRequired: true })).outcome).toBe("unchanged");
+    expect((await register("acct-own")).product.flags & F.AccountRequired).toBe(0);
+    expect((await register("acct-own", { flags: F.AccountRequired })).product.flags & F.AccountRequired).toBe(F.AccountRequired);
+    expect((await register("acct-own", { flags: F.AccountRequired })).outcome).toBe("unchanged");
 
     await register("acct-pub", { publisher: "acme" });
-    expect((await register("acct-pub", { publisher: "acme", accountRequired: true })).product).toMatchObject({ accountRequired: true, pendingTerms: null });
+    expect((await register("acct-pub", { publisher: "acme", flags: F.AccountRequired })).product).toMatchObject({ flags: F.Supplied | F.AccountRequired, pendingTerms: null });
     await releaseProduct(pool, { siteId: site.id, productId: id(SUPPLIER, "acct-pub"), listeners: [] });
-    const asked = await register("acct-pub", { publisher: "acme", accountRequired: false });
-    expect(asked.product).toMatchObject({ accountRequired: true, pendingTerms: { accountRequired: false } });
-    expect((await register("acct-pub", { publisher: "acme", accountRequired: false })).outcome).toBe("unchanged");
+    const asked = await register("acct-pub", { publisher: "acme", flags: 0 });
+    expect(asked.product).toMatchObject({ flags: F.Supplied | F.Released | F.AccountRequired, pendingTerms: { flags: 0 } });
+    expect((await register("acct-pub", { publisher: "acme", flags: 0 })).outcome).toBe("unchanged");
     const applied = await releaseProduct(pool, { siteId: site.id, productId: id(SUPPLIER, "acct-pub"), listeners: [] });
-    expect(applied!.product).toMatchObject({ accountRequired: false, pendingTerms: null });
+    expect(applied!.product).toMatchObject({ flags: F.Supplied | F.Released, pendingTerms: null });
   });
 
   it("needs no release for the Site's own product, and says so", async () => {
@@ -287,17 +287,17 @@ describe.skipIf(!configured)("products", () => {
     expect(await removeProduct(pool, { siteId: site.id, supplier: SUPPLIER, key: "rm-part" })).toBe(false);
   });
 
-  it("fixes counted once an entitlement names the product", async () => {
-    await register("cnt", { counted: true });
+  it("fixes Counted once an entitlement names the product", async () => {
+    await register("cnt", { flags: F.Counted });
     await state("cnt", "active");
-    expect((await register("cnt", { counted: false })).product.counted).toBe(false);
-    await register("cnt", { counted: true });
+    expect((await register("cnt", { flags: 0 })).product.flags & F.Counted).toBe(0);
+    await register("cnt", { flags: F.Counted });
     await grantEntitlement(pool, {
       siteId: site.id, subjectId, product: id(SUPPLIER, "cnt"), source: SHOP, reference: "cnt-1",
       startsAt: null, endsAt: null, quantity: 2, counted: true, listeners: [],
     });
-    await expect(register("cnt", { counted: false })).rejects.toThrow(/fixed/);
-    expect((await register("cnt", { counted: true })).outcome).toBe("unchanged");
+    await expect(register("cnt", { flags: 0 })).rejects.toThrow(/fixed/);
+    expect((await register("cnt", { flags: F.Counted })).outcome).toBe("unchanged");
   });
 
   it("lets every Add-on write only its own attributes, whole, and take them away", async () => {
@@ -334,7 +334,7 @@ describe.skipIf(!configured)("products", () => {
     expect(await get(id(SUPPLIER, "bundle-x"))).toBeNull();
     expect(() => draft("bundle-self", { parts: [id(SUPPLIER, "bundle-self")] })).not.toThrow();
     expect(() => normalizePhisProductDraft({ key: "bundle-self", type: "t", title: "t", summary: "", parts: [id(SUPPLIER, "bundle-self")] }, id(SUPPLIER, "bundle-self"))).toThrow(/part of itself/);
-    expect(() => draft("bundle-counted", { counted: true, parts: [id(SUPPLIER, "part-a")] })).toThrow(/not counted/);
+    expect(() => draft("bundle-counted", { flags: F.Counted, parts: [id(SUPPLIER, "part-a")] })).toThrow(/not counted/);
 
     const bundle = await register("bundle-ok", { parts: [id(SUPPLIER, "part-a"), id(SUPPLIER, "part-b")] });
     expect(bundle.product.parts).toEqual([id(SUPPLIER, "part-a"), id(SUPPLIER, "part-b")]);
@@ -761,7 +761,7 @@ describe.skipIf(!configured)("products", () => {
     await add(SUPPLIER, "d-new", { publisher: "p1", title: "Plain 100%_off" });
     await add(SUPPLIER, "d-pending", { publisher: "p1" });
     await releaseProduct(pool, { siteId: directory.id, productId: id(SUPPLIER, "d-pending"), listeners: [] });
-    await add(SUPPLIER, "d-pending", { publisher: "p1", free: true });
+    await add(SUPPLIER, "d-pending", { publisher: "p1", flags: F.Free });
     await add(OTHER, "d-locked");
     await moveProductsAsOperator(pool, { siteId: directory.id, to: "locked", productId: id(OTHER, "d-locked"), listeners: [] });
 
@@ -783,7 +783,7 @@ describe.skipIf(!configured)("products", () => {
     expect(ids(await read({ awaitingRelease: false }))).toEqual([id(OTHER, "d-locked"), id(SUPPLIER, "d-own")]);
     const released = await listProducts(pool, { siteId: directory.id, states: every, cursor: null, limit: 50, released: false });
     expect(ids(released).sort()).toEqual(ids(await read({ awaitingRelease: true })).sort());
-    expect((await read({ awaitingRelease: true })).products[1]!.pendingTerms).toMatchObject({ free: true });
+    expect((await read({ awaitingRelease: true })).products[1]!.pendingTerms).toMatchObject({ flags: F.Free });
 
     // The search reads the title and the id, any case, and takes `%` and `_` as themselves.
     expect(ids(await read({ search: "studio pro" }))).toEqual([id(SUPPLIER, "d-own")]);
@@ -835,16 +835,16 @@ describe.skipIf(!configured)("products", () => {
       siteId: site.id, subjectId, product: id(supplier, "f-active"), source: SHOP, reference: "f-1",
       startsAt: null, endsAt: null, quantity: null, counted: false, listeners: [],
     });
-    expect((await get(id(supplier, "f-active")))!.supplied).toBe(true);
+    expect((await get(id(supplier, "f-active")))!.flags & F.Supplied).toBe(F.Supplied);
     // Nothing to do while the supplier is on.
     expect(await reconcileProductSupply(pool, listeners, site.id)).toEqual([]);
 
     await clearOutbox();
     await switchSupplier(supplier, false);
-    expect((await get(id(supplier, "f-active")))!.supplied).toBe(false);
+    expect((await get(id(supplier, "f-active")))!.flags & F.Supplied).toBe(0);
     const lost = await reconcileProductSupply(pool, listeners, site.id);
     expect(lost).toEqual([{ siteId: site.id, id: id(supplier, "f-active"), to: "withdrawn" }]);
-    expect((await get(id(supplier, "f-active")))).toMatchObject({ state: "withdrawn", supplied: false });
+    expect((await get(id(supplier, "f-active")))).toMatchObject({ state: "withdrawn", flags: F.Released });
     expect((await get(id(supplier, "f-draft")))!.state).toBe("draft");
     expect((await outbox()).map((row) => row.payload.productId)).toEqual([id(supplier, "f-active")]);
     expect(await reconcileProductSupply(pool, listeners, site.id)).toEqual([]);
@@ -855,13 +855,13 @@ describe.skipIf(!configured)("products", () => {
     // A globally disabled Add-on is off as well, however the Site asked.
     await pool.query(`UPDATE phis.site_server_addons SET flags = 1 WHERE site_id = $1 AND addon_id = $2`, [site.id, supplier]);
     expect(await reconcileProductSupply(pool, listeners, site.id)).toEqual([]);
-    expect((await get(id(supplier, "f-active")))!.supplied).toBe(false);
+    expect((await get(id(supplier, "f-active")))!.flags & F.Supplied).toBe(0);
 
     await clearOutbox();
     await switchSupplier(supplier, true);
     const back = await reconcileProductSupply(pool, listeners, site.id);
     expect(back).toEqual([{ siteId: site.id, id: id(supplier, "f-active"), to: "active" }]);
-    expect((await get(id(supplier, "f-active")))).toMatchObject({ state: "active", supplied: true });
+    expect((await get(id(supplier, "f-active")))).toMatchObject({ state: "active", flags: F.Supplied | F.Released });
     // What the operator withdrew stays withdrawn, and a draft stays a draft.
     expect((await get(id(supplier, "f-operator")))!.state).toBe("withdrawn");
     expect((await get(id(supplier, "f-draft")))!.state).toBe("draft");
@@ -881,7 +881,7 @@ describe.skipIf(!configured)("products", () => {
     // The bundle is declared before its part and still registers, parts first.
     const first = await sync([entry("m-bundle", { parts: [id(supplier, "m-part")] }), entry("m-part"), entry("m-gone")], listeners);
     expect(first.map((a) => `${a.key}:${a.action}`).sort()).toEqual(["m-bundle:created", "m-gone:created", "m-part:created"]);
-    expect((await get(id(supplier, "m-part")))).toMatchObject({ state: "active", publisher: null, released: true });
+    expect((await get(id(supplier, "m-part")))).toMatchObject({ state: "active", publisher: null, flags: F.Supplied | F.Released });
     expect((await get(id(supplier, "m-bundle")))!.parts).toEqual([id(supplier, "m-part")]);
     expect((await outbox()).length).toBe(3);
 
@@ -890,14 +890,14 @@ describe.skipIf(!configured)("products", () => {
     expect((await sync([entry("m-bundle", { parts: [id(supplier, "m-part")] }), entry("m-part"), entry("m-gone")], listeners)).every((a) => a.action === "unchanged")).toBe(true);
     expect(await outbox()).toHaveLength(0);
     await state("m-part", "withdrawn", supplier);
-    const second = await sync([entry("m-bundle", { parts: [id(supplier, "m-part")] }), entry("m-part", { title: "Renamed" }), entry("m-new", { free: true })], listeners);
+    const second = await sync([entry("m-bundle", { parts: [id(supplier, "m-part")] }), entry("m-part", { title: "Renamed" }), entry("m-new", { flags: F.Free })], listeners);
     expect(Object.fromEntries(second.map((a) => [a.key, a.action]))).toEqual({
       "m-bundle": "unchanged", "m-part": "updated", "m-new": "created", "m-gone": "withdrawn",
     });
     expect((await get(id(supplier, "m-part")))).toMatchObject({ title: "Renamed", state: "withdrawn" });
-    expect((await get(id(supplier, "m-new")))).toMatchObject({ state: "active", free: true, accountRequired: false });
-    await sync([entry("m-bundle", { parts: [id(supplier, "m-part")] }), entry("m-part", { title: "Renamed" }), entry("m-new", { free: true, accountRequired: true })]);
-    expect((await get(id(supplier, "m-new")))!.accountRequired).toBe(true);
+    expect((await get(id(supplier, "m-new")))).toMatchObject({ state: "active", flags: F.Supplied | F.Released | F.Free });
+    await sync([entry("m-bundle", { parts: [id(supplier, "m-part")] }), entry("m-part", { title: "Renamed" }), entry("m-new", { flags: F.Free | F.AccountRequired })]);
+    expect((await get(id(supplier, "m-new")))!.flags & F.AccountRequired).toBe(F.AccountRequired);
     // Withdrawn, not removed.
     expect((await get(id(supplier, "m-gone")))).toMatchObject({ state: "withdrawn" });
 

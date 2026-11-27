@@ -64,7 +64,7 @@ describe("media source import against PostgreSQL", () => {
       providerKey: "pgsrc",
       providerId: "@pgtest/source",
       adapter: {
-        probe: async () => ({ usable: true, sources: [{ key: "stock", label: "Stock" }], findings: [] }),
+        probe: async () => ({ flags: 1, sources: [{ key: "stock", label: "Stock" }], findings: [] }),
         list: async () => ({ items: [], nextCursor: null }),
         take: async () => ({
           bytes: new Uint8Array(next.bytes), contentType: "image/png", fileName: "pic.png", title: "A picture",

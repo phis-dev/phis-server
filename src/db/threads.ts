@@ -11,6 +11,7 @@ import {
   PhisThreadKind,
   PhisThreadMessageFlag,
   PhisThreadParticipantFlag,
+  PhisThreadReaderFlag,
   PhisThreadStatus,
   type PhisThreadDetail,
   type PhisThreadKindValue,
@@ -563,9 +564,8 @@ function projectThread(row: ThreadRow): PhisThreadSummary {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     latestMessageAt: row.last_message_created_at,
-    unread:
-      row.last_message_id != null
-      && row.last_message_id > (row.last_read_message_id ?? 0),
+    readerFlags:
+      row.last_message_id != null && row.last_message_id > (row.last_read_message_id ?? 0) ? PhisThreadReaderFlag.Unread : 0,
   };
 }
 

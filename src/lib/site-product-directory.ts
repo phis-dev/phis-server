@@ -46,8 +46,8 @@ const SEARCH_MAX_LENGTH = 200;
  */
 export type SiteProductDirectoryRow = Pick<
   PhisProduct,
-  | "id" | "supplier" | "publisher" | "title" | "summary" | "type" | "state" | "sale" | "referralUrl" | "free"
-  | "accountRequired" | "counted" | "parts" | "released" | "pendingTerms" | "imagePath" | "iconPath"
+  | "id" | "supplier" | "publisher" | "title" | "summary" | "type" | "state" | "sale" | "referralUrl" | "flags"
+  | "parts" | "pendingTerms" | "imagePath" | "iconPath"
   | "imageListPath" | "iconListPath" | "version"
 >;
 
@@ -64,11 +64,8 @@ function toRow(stored: PhisStoredProduct, siteKey: string): SiteProductDirectory
     state: product.state,
     sale: product.sale,
     referralUrl: product.referralUrl,
-    free: product.free,
-    accountRequired: product.accountRequired,
-    counted: product.counted,
+    flags: product.flags,
     parts: product.parts,
-    released: product.released,
     pendingTerms: product.pendingTerms,
     imagePath: product.imagePath,
     iconPath: product.iconPath,

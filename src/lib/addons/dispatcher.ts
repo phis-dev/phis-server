@@ -1,4 +1,5 @@
 import "server-only";
+import { PhisAddonInstallationFlag } from "@phis/contracts/addon";
 
 import { randomUUID } from "node:crypto";
 
@@ -496,7 +497,7 @@ async function dispatchAddonRequest(
   });
   const entry = getPhisAddonInstalledManifest()[addonId];
 
-  if (!entry || !entry.enabled) {
+  if (!entry || (entry.flags & PhisAddonInstallationFlag.Enabled) === 0) {
     return notFound();
   }
 

@@ -186,7 +186,7 @@ import {
 } from "./module-products.mts";
 import { listSiteModuleProductProposals, listSiteModuleProducts } from "../db/site-module-products.mts";
 import { PHIS_SITE_PACKAGE_PRODUCT_SUPPLIER } from "@phis/contracts/products";
-import { PhisCdnCheckObjectFlags } from "@phis/contracts/addon";
+import { PhisCdnCheckObjectFlags, PhisAddonInstallationFlag, PhisMediaStorageProbeFlag, PhisMediaStorageProvisionFlag } from "@phis/contracts/addon";
 import { checkPhiDependencyLicenses } from "./licenses.mts";
 import { checkPhiMediaOwnership, findPhiMediaOrphanedLocalStaging } from "./media-check.mts";
 import { formatMediaImportReport, importMediaFiles, readMediaImportFiles, readMediaImportText } from "./media-import.mts";
@@ -2923,7 +2923,7 @@ async function grantSiteAdmin(flags: FlagMap, json: boolean) {
     firstName: typeof firstName === "string" ? firstName : null,
     lastName: typeof lastName === "string" ? lastName : null,
     userListeners: listUserListenersOf(
-      Object.fromEntries(readAddonDesiredState(configRoot).addons.map((entry) => [entry.addonId, { enabled: entry.enabled, manifest: entry.manifest }])),
+      Object.fromEntries(readAddonDesiredState(configRoot).addons.map((entry) => [entry.addonId, { flags: entry.flags, manifest: entry.manifest }])),
       "user.registered",
     ),
   });
@@ -4144,7 +4144,7 @@ async function main() {
         console.log(
           `${profile.key}  ${profile.providerId}  ` +
           (profile.probed
-            ? `${profile.writable ? "writable" : "NOT WRITABLE"}, ` +
+            ? `${((profile.flags ?? 0) & PhisMediaStorageProbeFlag.Writable) !== 0 ? "writable" : "NOT WRITABLE"}, ` +
               `verifies ${profile.verifiedAlgorithms?.length ? profile.verifiedAlgorithms.join("/") : "nothing"}, ` +
               `recording ${profile.chosenAlgorithm ?? "no digest of its own"}`
             : "not probed"),
@@ -4167,7 +4167,7 @@ async function main() {
       );
       if (result.action === "storage.add") {
         if (result.provision) {
-          console.log(`  bucket ${result.provision.created ? "created" : "already there"}, website ${result.provision.website}`);
+          console.log(`  bucket ${(result.provision.flags & PhisMediaStorageProvisionFlag.Created) !== 0 ? "created" : "already there"}, website ${result.provision.website}`);
           for (const finding of result.provision.findings) console.log(`  ${finding}`);
         }
         if (result.cdn) console.log("  A CDN Profile: attach it with phis cdn attach. No Space can write to it.");
@@ -4219,7 +4219,7 @@ async function main() {
     } else {
       for (const addon of result.addons) {
         console.log(
-          `${addon.addonId}  enabled=${addon.enabled ? "true" : "false"}  package=${addon.packageName}@${addon.packageVersion}`,
+          `${addon.addonId}  enabled=${(addon.flags & PhisAddonInstallationFlag.Enabled) !== 0 ? "true" : "false"}  package=${addon.packageName}@${addon.packageVersion}`,
         );
       }
     }
@@ -4919,7 +4919,7 @@ async function main() {
      * section 9). Read from the desired state, as the groups are.
      */
     const productEntries = Object.fromEntries(
-      readAddonDesiredState(configRoot).addons.map((entry) => [entry.addonId, { enabled: entry.enabled, manifest: entry.manifest }]),
+      readAddonDesiredState(configRoot).addons.map((entry) => [entry.addonId, { flags: entry.flags, manifest: entry.manifest }]),
     );
     const products = wantsEnable
       ? await syncAddonProductsAtSite(getPool(), {

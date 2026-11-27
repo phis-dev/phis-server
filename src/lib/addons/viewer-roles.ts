@@ -1,4 +1,5 @@
 import "server-only";
+import { PhisAddonInstallationFlag } from "@phis/contracts/addon";
 
 import type { PhiViewerAddonRoleClaim } from "@/lib/authorization";
 import { PHIS_SITE_ACCESS, type PhisAddonRoleDescriptor, type PhisSiteAccess } from "./contract.ts";
@@ -26,7 +27,7 @@ export function listPhiCountingAddonDeclaredRoles(
 ): Map<string, readonly PhisAddonRoleDescriptor[]> {
   const counting = new Map<string, readonly PhisAddonRoleDescriptor[]>();
   for (const [addonId, entry] of Object.entries(getPhisAddonInstalledManifest())) {
-    if (entry.enabled && availableProviderIds.has(addonId)) {
+    if ((entry.flags & PhisAddonInstallationFlag.Enabled) !== 0 && availableProviderIds.has(addonId)) {
       counting.set(addonId, entry.manifest.roles ?? []);
     }
   }
@@ -56,7 +57,7 @@ export function filterPhiCountingAddonGrants<G extends { addonId: string; role: 
 export function listPhiInstalledAddonImpliedSiteAccesses(): PhisSiteAccess[] {
   const accesses = new Set<PhisSiteAccess>();
   for (const entry of Object.values(getPhisAddonInstalledManifest())) {
-    if (!entry.enabled) continue;
+    if ((entry.flags & PhisAddonInstallationFlag.Enabled) === 0) continue;
     for (const role of entry.manifest.roles ?? []) {
       if (role.impliedBy !== undefined) accesses.add(role.impliedBy.siteAccess);
     }

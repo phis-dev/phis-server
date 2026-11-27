@@ -111,10 +111,10 @@ describe.skipIf(process.env.PHIS_PG_TEST !== "1")("users:v1", () => {
   beforeAll(async () => {
     const pool = await requirePhiTestDatabase();
     installed.entries = {
-      [READER]: { enabled: true, manifest: { addonId: READER, capabilities: [], requiredCoreCapabilities: [PHIS_CORE_CAPABILITIES.users],
+      [READER]: { flags: 1, manifest: { addonId: READER, capabilities: [], requiredCoreCapabilities: [PHIS_CORE_CAPABILITIES.users],
         eventHandlers: [{ id: "r", event: "user.registered", handler: "r" }, { id: "c", event: "user.changed", handler: "c" }], jobs: [] } },
       // Listens, and may not read people: hears nothing.
-      [DEAF]: { enabled: true, manifest: { addonId: DEAF, capabilities: [], requiredCoreCapabilities: [],
+      [DEAF]: { flags: 1, manifest: { addonId: DEAF, capabilities: [], requiredCoreCapabilities: [],
         eventHandlers: [{ id: "r", event: "user.registered", handler: "r" }], jobs: [] } },
     };
     site = await createPhiTestSite("users");

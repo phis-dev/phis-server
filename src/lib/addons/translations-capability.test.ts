@@ -50,7 +50,7 @@ describe("translations capability", () => {
     const answer = await capability(true).translate({
       context: "listing hint", locale: "de", texts: ["20 % off", "", "Free shipping", "never recorded"],
     });
-    expect(answer).toEqual({ texts: ["20 % Rabatt", "", "DE Free shipping", "never recorded"], provisional: false });
+    expect(answer).toEqual({ texts: ["20 % Rabatt", "", "DE Free shipping", "never recorded"], flags: 0 });
     // The TR route's choice, under the stored context, recording nothing and reading the recorded messages.
     expect(state.texts).toHaveBeenCalledWith({
       siteId: 7, locale: "de", sourceLocale: "en", canonicalLocale: "en", ctx: "@acme/shop: listing hint", format: "text",
@@ -62,7 +62,7 @@ describe("translations capability", () => {
   it("answers the texts as written in the source language, without a locale, and in a language none is kept in", async () => {
     for (const locale of [null, "en", "en-GB", "xx-nowhere"]) {
       expect(await capability().translate({ context: "hint", locale, texts: ["20 % off"] }), String(locale))
-        .toEqual({ texts: ["20 % off"], provisional: false });
+        .toEqual({ texts: ["20 % off"], flags: 0 });
     }
     expect(state.texts).not.toHaveBeenCalled();
     await expect(capability().translate({ context: "hint", locale: 7 as never, texts: [] })).rejects.toThrow(/locale/);
@@ -79,7 +79,7 @@ describe("translations capability", () => {
       msgs: ["20 % off", "Livraison gratuite", "never recorded"], recordedMessages: true,
     }));
     // In their own language they are the answer.
-    expect(await capability().translate({ context: "hint", locale: "fr", sourceLocale: "fr", texts: ["Livraison"] })).toEqual({ texts: ["Livraison"], provisional: false });
+    expect(await capability().translate({ context: "hint", locale: "fr", sourceLocale: "fr", texts: ["Livraison"] })).toEqual({ texts: ["Livraison"], flags: 0 });
   });
 
   it("takes the Add-on's own language where the call names none, the Site's where the manifest names none either", async () => {
@@ -88,7 +88,7 @@ describe("translations capability", () => {
     // Stated, the call's language wins over the Add-on's: what staff typed is the Site's.
     await capability(false, "fr").translate({ context: "hint", locale: "de", sourceLocale: "en", texts: ["Free shipping"] });
     expect(state.texts).toHaveBeenCalledWith(expect.objectContaining({ sourceLocale: "en" }));
-    expect(await capability(false, "fr").translate({ context: "hint", locale: "fr", texts: ["Livraison"] })).toEqual({ texts: ["Livraison"], provisional: false });
+    expect(await capability(false, "fr").translate({ context: "hint", locale: "fr", texts: ["Livraison"] })).toEqual({ texts: ["Livraison"], flags: 0 });
   });
 
   it("refuses a language Core does not know", async () => {

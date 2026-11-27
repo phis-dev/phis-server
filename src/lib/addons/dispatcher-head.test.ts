@@ -34,7 +34,7 @@ const entry = vi.hoisted(() => {
     apiHandlers: { download: respond("request"), upload: respond("upload") },
     hookHandlers: { catalogue: respond("hook") },
   };
-  return { enabled: true, manifest, manifestDigest: "digest", load: async () => ({ phisAddon }) };
+  return { flags: 1, manifest, manifestDigest: "digest", load: async () => ({ phisAddon }) };
 });
 
 vi.mock("@/lib/addons/installed", () => ({

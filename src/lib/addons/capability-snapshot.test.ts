@@ -53,7 +53,7 @@ describe("the Core provider in the capability snapshot", () => {
 
 function installedAddon(addonId: string, capabilityIds: string[]) {
   return {
-    enabled: true,
+    flags: 1,
     manifestDigest: `${addonId}-digest`,
     manifest: {
       packageName: addonId,
@@ -137,7 +137,7 @@ describe("an Add-on's Media limits in the snapshot", () => {
   it("passes them on for an Add-on that is off as well, since its Module reads none of it then", async () => {
     const limited = installedAddon("@acme/gallery", ["@acme/gallery:v1"]);
     mocks.installed = {
-      "@acme/gallery": { ...limited, enabled: false, manifest: { ...limited.manifest, media: { maxPerField: 3 } } },
+      "@acme/gallery": { ...limited, flags: 0, manifest: { ...limited.manifest, media: { maxPerField: 3 } } },
     };
     const snapshot = await buildPhisCapabilitySnapshot(1);
     expect(snapshot.providers[1]).toMatchObject({ state: "disabled", media: { maxPerField: 3 } });

@@ -10,6 +10,7 @@ import {
   PHI_SEARCH_MAX_PATH_LENGTH,
   PHI_SEARCH_MAX_TEXT_LENGTH,
   PHI_SEARCH_MAX_TITLE_LENGTH,
+  PhiSearchSnippetSegmentFlag,
   tokenizePhiSearchQuery,
   type PhiSearchDocument,
   type PhiSearchHit,
@@ -212,11 +213,11 @@ function splitHeadline(headline: string): PhiSearchSnippetSegment[] {
   let cursor = 0;
   for (const match of headline.matchAll(pattern)) {
     const start = match.index ?? 0;
-    if (start > cursor) segments.push({ text: headline.slice(cursor, start), match: false });
-    segments.push({ text: match[1], match: true });
+    if (start > cursor) segments.push({ text: headline.slice(cursor, start), flags: 0 });
+    segments.push({ text: match[1], flags: PhiSearchSnippetSegmentFlag.Match });
     cursor = start + match[0].length;
   }
-  if (cursor < headline.length) segments.push({ text: headline.slice(cursor), match: false });
+  if (cursor < headline.length) segments.push({ text: headline.slice(cursor), flags: 0 });
   return segments;
 }
 

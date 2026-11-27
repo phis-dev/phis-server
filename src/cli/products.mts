@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 
-import type { PhisProductId, PhisProductState } from "@phis/contracts/products";
+import { PhisProductFlag, type PhisProductId, type PhisProductState } from "@phis/contracts/products";
 
 import { listProducts, moveProductsAsOperator, readProduct, releaseProduct, type PhisStoredProduct as PhisProduct } from "../db/products.mts";
 import { listProductListenersOf, type PhisInstalledManifestEntries } from "../lib/addons/commerce-listeners.ts";
@@ -37,15 +37,17 @@ function productId(flags: Flags) {
 
 function describeProduct(product: PhisProduct) {
   const notes = [
-    product.released ? "released" : "not released",
+    (product.flags & PhisProductFlag.Released) !== 0 ? "released" : "not released",
     ...(product.pendingTerms ? ["terms pending release"] : []),
-    ...(product.supplied ? [] : ["supplier off"]),
+    ...((product.flags & PhisProductFlag.Supplied) !== 0 ? [] : ["supplier off"]),
   ];
   return `${product.id}  ${product.state}  ${product.type}  "${product.title}"  publisher ${product.publisher ?? "-"}  ${notes.join(", ")}`;
 }
 
-function describeTerms(terms: { sale: string; referralUrl: string | null; free: boolean; accountRequired: boolean; parts: readonly string[] }) {
-  return `sale ${terms.sale}${terms.referralUrl ? ` (${terms.referralUrl})` : ""}, ${terms.free ? "free" : "not free"}, ${terms.accountRequired ? "account required" : "no account required"}, `
+function describeTerms(terms: { sale: string; referralUrl: string | null; flags: number; parts: readonly string[] }) {
+  const free = (terms.flags & PhisProductFlag.Free) !== 0;
+  const accountRequired = (terms.flags & PhisProductFlag.AccountRequired) !== 0;
+  return `sale ${terms.sale}${terms.referralUrl ? ` (${terms.referralUrl})` : ""}, ${free ? "free" : "not free"}, ${accountRequired ? "account required" : "no account required"}, `
     + `parts ${terms.parts.length === 0 ? "-" : terms.parts.join(" ")}`;
 }
 
@@ -55,9 +57,9 @@ function showProduct(product: PhisProduct) {
     `${product.id}  ${product.state}  version ${product.version}`,
     `  title      ${product.title}`,
     `  summary    ${product.summary || "-"}`,
-    `  type       ${product.type}${product.counted ? ", counted" : ""}`,
-    `  supplier   ${product.supplier} (${product.supplied ? "switched on for the Site" : "switched off"})`,
-    `  publisher  ${product.publisher ?? "- (the Site's own)"}  ${product.released ? "released" : "not released"}`,
+    `  type       ${product.type}${(product.flags & PhisProductFlag.Counted) !== 0 ? ", counted" : ""}`,
+    `  supplier   ${product.supplier} (${(product.flags & PhisProductFlag.Supplied) !== 0 ? "switched on for the Site" : "switched off"})`,
+    `  publisher  ${product.publisher ?? "- (the Site's own)"}  ${(product.flags & PhisProductFlag.Released) !== 0 ? "released" : "not released"}`,
     `  image      ${product.imageAssetId === null ? "-" : `Asset ${product.imageAssetId}`}`,
     `  icon       ${product.iconAssetId === null ? "-" : `Asset ${product.iconAssetId}`}`,
     `  gallery    ${product.galleryMedia.length === 0 ? "-" : product.galleryMedia.map((media) => `Asset ${media.id}`).join(", ")}`,
@@ -73,7 +75,7 @@ function showProduct(product: PhisProduct) {
 export async function runPhisProductCommand(root: string, pool: Pool, words: readonly string[], flags: Flags) {
   const selectedSite = await site(pool, flag(flags, "site").toLowerCase());
   const addons = readAddonDesiredState(root).addons;
-  const entries: PhisInstalledManifestEntries = Object.fromEntries(addons.map((a) => [a.addonId, { enabled: a.enabled, manifest: a.manifest }]));
+  const entries: PhisInstalledManifestEntries = Object.fromEntries(addons.map((a) => [a.addonId, { flags: a.flags, manifest: a.manifest }]));
   const listeners = listProductListenersOf(entries);
   const [command] = words;
 

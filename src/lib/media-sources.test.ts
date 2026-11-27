@@ -53,7 +53,7 @@ import {
 } from "./media-sources";
 
 const site = { id: 1, key: "acme" };
-const probeOk = { usable: true, sources: [{ key: "stock", label: "Stock" }], findings: [] };
+const probeOk = { flags: 1, sources: [{ key: "stock", label: "Stock" }], findings: [] };
 const item = {
   id: "a1", kind: "image", title: "A", thumbnailUrl: "https://cdn.example/a.jpg", width: 10, height: 5, credit: null,
 };
@@ -110,9 +110,9 @@ describe("listing sources", () => {
   it("leaves out an implementation that is unusable, throws, or answers a malformed probe", async () => {
     offer(
       ["ok", adapter()],
-      ["off", adapter({ probe: async () => ({ ...probeOk, usable: false, findings: ["no key"] }) })],
+      ["off", adapter({ probe: async () => ({ ...probeOk, flags: 0, findings: ["no key"] }) })],
       ["boom", adapter({ probe: async () => { throw new Error("x"); } })],
-      ["bad", adapter({ probe: async () => ({ usable: true, sources: [{ key: 1 }], findings: [] }) })],
+      ["bad", adapter({ probe: async () => ({ flags: 1, sources: [{ key: 1 }], findings: [] }) })],
     );
     expect(await listMediaSources(site)).toEqual([{ source: "ok#stock", label: "Stock" }]);
     expect(mocks.log.mock.calls.filter(([level]) => level === "warn")).toHaveLength(3);
@@ -167,7 +167,7 @@ describe("a page of a source", () => {
     expect(await codeOf(page({ source: "nohash" }))).toBe("media_source_not_found:404");
     expect(await codeOf(page({ source: "other#stock" }))).toBe("media_source_not_found:404");
     expect(await codeOf(page({ source: "p#nope" }))).toBe("media_source_not_found:404");
-    offer(["p", adapter({ probe: async () => ({ ...probeOk, usable: false }) })]);
+    offer(["p", adapter({ probe: async () => ({ ...probeOk, flags: 0 }) })]);
     expect(await codeOf(page())).toBe("media_source_unusable:409");
   });
 });

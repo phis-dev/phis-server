@@ -1,4 +1,5 @@
 import "server-only";
+import { PhisAddonInstallationFlag } from "@phis/contracts/addon";
 
 import type { PhisAddonJobSchedule } from "@phis/contracts/addon";
 
@@ -90,7 +91,7 @@ function resolveWork(key: PhiJobKey): JobWork | null {
     return job ? (signal) => job.run(signal) : null;
   }
   const entry = getPhisAddonInstalledManifest()[key.owner];
-  if (!entry || !entry.enabled || !entry.manifest.jobs.some((job) => job.id === key.jobId)) {
+  if (!entry || (entry.flags & PhisAddonInstallationFlag.Enabled) === 0 || !entry.manifest.jobs.some((job) => job.id === key.jobId)) {
     return null;
   }
   return (signal) => runAddonJob(key.owner, key.jobId, key.siteId, signal);
@@ -172,7 +173,7 @@ async function tick() {
       await attempt({ owner: PHI_CORE_JOB_OWNER, jobId: job.id, siteId: null }, job.schedule, now, (signal) => job.run(signal));
     }
     for (const [addonId, entry] of Object.entries(getPhisAddonInstalledManifest())) {
-      if (!entry.enabled) continue;
+      if ((entry.flags & PhisAddonInstallationFlag.Enabled) === 0) continue;
       const scheduled = entry.manifest.jobs.filter((job) => job.schedule);
       if (scheduled.length === 0) continue;
       const siteIds = await readPhisAddonReadySiteIds(getPool(), addonId);

@@ -44,7 +44,6 @@ const ID = "@acme/licences:pro.yearly";
 const stored = (rest: Record<string, unknown> = {}) => ({
   id: ID,
   supplier: "@acme/licences",
-  supplied: true,
   publisher: "studio-7",
   type: "licence",
   title: "Pro",
@@ -55,15 +54,14 @@ const stored = (rest: Record<string, unknown> = {}) => ({
   iconMedia: null,
   description: "",
   galleryMedia: [],
-  counted: false,
   sale: "payout",
   referralUrl: null,
-  free: false,
-  accountRequired: true,
+  // Supplied | Released | AccountRequired
+  flags: 8 | 16 | 2,
   parts: [],
   state: "active",
-  released: true,
-  pendingTerms: { sale: "payout", referralUrl: null, free: true, accountRequired: true, parts: [] },
+  // Free | AccountRequired
+  pendingTerms: { sale: "payout", referralUrl: null, flags: 4 | 2, parts: [] },
   attributes: { "@acme/seller": { mark: "new" } },
   version: 4,
   createdAt: "2026-11-01T00:00:00.000Z",
@@ -103,12 +101,9 @@ describe("the product directory", () => {
       state: "active",
       sale: "payout",
       referralUrl: null,
-      free: false,
-      accountRequired: true,
-      counted: false,
+      flags: 8 | 16 | 2,
       parts: [],
-      released: true,
-      pendingTerms: { sale: "payout", referralUrl: null, free: true, accountRequired: true, parts: [] },
+      pendingTerms: { sale: "payout", referralUrl: null, flags: 4 | 2, parts: [] },
       imagePath: "/api/site/media/12/content?r=3",
       iconPath: null,
       imageListPath: "/api/site/media/12/variants/10?r=3&v=2",
@@ -184,14 +179,14 @@ describe("the operator's commands on one product", () => {
 
   it("releases the pending terms and says so, with the product as it now stands", async () => {
     mocks.release.mockResolvedValue({ outcome: "applied", product: stored() });
-    mocks.read.mockResolvedValue(stored({ pendingTerms: null, free: true, version: 5 }));
+    mocks.read.mockResolvedValue(stored({ pendingTerms: null, flags: 8 | 16 | 4 | 2, version: 5 }));
     const response = await command(RELEASE, ID, "release");
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.outcome).toBe("applied");
     // The product as the directory lists it, so the row can be replaced by it.
     expect(body.product).toMatchObject({
-      id: ID, pendingTerms: null, free: true, version: 5, imageListPath: "/api/site/media/12/variants/10?r=3&v=2",
+      id: ID, pendingTerms: null, flags: 8 | 16 | 4 | 2, version: 5, imageListPath: "/api/site/media/12/variants/10?r=3&v=2",
     });
     expect(mocks.release).toHaveBeenCalledWith({}, { siteId: 31, productId: ID, listeners: ["@acme/seller"] });
     expect(mocks.schedule).toHaveBeenCalledWith(31);

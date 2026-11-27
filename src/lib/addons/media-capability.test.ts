@@ -55,7 +55,7 @@ describe("media capability", () => {
     state.read.mockResolvedValue([asset({})]);
     await expect(capability().get({ ids: [9] })).resolves.toEqual([{
       id: 9, name: "cover.png", title: "Cover", contentType: "image/png", byteSize: 2048, width: 640, height: 480,
-      alt: "A cover", servable: true, path: "/api/site/media/9/content?r=3",
+      alt: "A cover", flags: 1, path: "/api/site/media/9/content?r=3",
       thumbnailPath: "/api/site/media/9/variants/0?r=3&v=2",
       previewPath: "/api/site/media/9/variants/1?r=3&v=2",
       blurDataUrl: "data:image/webp;base64,AAAA",
@@ -75,7 +75,7 @@ describe("media capability", () => {
     state.read.mockResolvedValue([asset({ contentType: "application/pdf", originalName: "terms.pdf", title: null, blurDataUrl: null })]);
     const [answer] = await capability().get({ ids: [9] });
     expect(answer).toMatchObject({
-      name: "terms.pdf", title: null, servable: true, path: "/api/site/media/9/content?r=3",
+      name: "terms.pdf", title: null, flags: 1, path: "/api/site/media/9/content?r=3",
       thumbnailPath: null, previewPath: null, blurDataUrl: null,
     });
   });
@@ -86,8 +86,8 @@ describe("media capability", () => {
       asset({ id: 2, deliveryPolicy: 2 }),
     ]);
     const answer = await capability().get({ ids: [1, 2] });
-    expect(answer.map((entry) => [entry.id, entry.servable, entry.path, entry.thumbnailPath, entry.previewPath]))
-      .toEqual([[1, false, null, null, null], [2, false, null, null, null]]);
+    expect(answer.map((entry) => [entry.id, entry.flags, entry.path, entry.thumbnailPath, entry.previewPath]))
+      .toEqual([[1, 0, null, null, null], [2, 0, null, null, null]]);
     expect(answer.map((entry) => entry.name)).toEqual(["cover.png", "cover.png"]);
   });
 

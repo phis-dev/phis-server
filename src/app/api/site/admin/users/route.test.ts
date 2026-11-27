@@ -238,9 +238,9 @@ describe("PUT /api/site/admin/users with Add-on roles", () => {
     mocks.getByEmail.mockResolvedValue(null);
     // `@acme/off` is installed and enabled, but not available on the Site: its roles do not count here.
     mocks.installed.mockReturnValue({
-      [SHOP_ADDON]: { enabled: true, manifest: { addonId: SHOP_ADDON, roles: shopRoles } },
-      [BLOG_ADDON]: { enabled: true, manifest: { addonId: BLOG_ADDON, roles: blogRoles } },
-      "@acme/off": { enabled: true, manifest: { addonId: "@acme/off", roles: [{ name: "x" }] } },
+      [SHOP_ADDON]: { flags: 1, manifest: { addonId: SHOP_ADDON, roles: shopRoles } },
+      [BLOG_ADDON]: { flags: 1, manifest: { addonId: BLOG_ADDON, roles: blogRoles } },
+      "@acme/off": { flags: 1, manifest: { addonId: "@acme/off", roles: [{ name: "x" }] } },
     });
     mocks.available.mockResolvedValue(new Set([SHOP_ADDON, BLOG_ADDON]));
     mocks.held.mockResolvedValue([
@@ -324,7 +324,7 @@ describe("PUT /api/site/admin/users with Add-on roles", () => {
   });
 
   it("answers 404 role_undeclared for an Add-on that counts but declares no roles", async () => {
-    mocks.installed.mockReturnValue({ "@acme/plain": { enabled: true, manifest: { addonId: "@acme/plain" } } });
+    mocks.installed.mockReturnValue({ "@acme/plain": { flags: 1, manifest: { addonId: "@acme/plain" } } });
     mocks.available.mockResolvedValue(new Set(["@acme/plain"]));
 
     const response = await put(["@acme/plain:x"]);
@@ -392,7 +392,7 @@ describe("PUT /api/site/admin/users with Add-on roles", () => {
 
   it("answers the saved row with the stored Add-on roles that count, as GET lists them", async () => {
     mocks.available.mockResolvedValue(new Set([SHOP_ADDON]));
-    mocks.installed.mockReturnValue({ [SHOP_ADDON]: { enabled: true, manifest: { addonId: SHOP_ADDON, roles: shopRoles } } });
+    mocks.installed.mockReturnValue({ [SHOP_ADDON]: { flags: 1, manifest: { addonId: SHOP_ADDON, roles: shopRoles } } });
     mocks.grants.mockResolvedValue(new Map([[41, [{ addonId: SHOP_ADDON, role: "manager" }, { addonId: BLOG_ADDON, role: "editor" }]]]));
 
     const response = await put([`${SHOP_ADDON}:manager`]);
@@ -403,7 +403,7 @@ describe("PUT /api/site/admin/users with Add-on roles", () => {
   it("answers what the saved Core roles imply beside the stored roles, and stores none of it", async () => {
     mocks.installed.mockReturnValue({
       [SHOP_ADDON]: {
-        enabled: true,
+        flags: 1,
         manifest: { addonId: SHOP_ADDON, roles: [{ name: "clerk" }, { name: "books", impliedBy: { siteAccess: "accounting" } }] },
       },
     });
@@ -535,7 +535,7 @@ describe("GET /api/site/admin/users?userId with Add-on roles", () => {
     mocks.getById.mockResolvedValue(account([7]));
     mocks.available.mockResolvedValue(new Set(["@acme/shop"]));
     mocks.installed.mockReturnValue({
-      "@acme/shop": { enabled: true, manifest: { addonId: "@acme/shop", roles: [{ name: "clerk" }] } },
+      "@acme/shop": { flags: 1, manifest: { addonId: "@acme/shop", roles: [{ name: "clerk" }] } },
     });
     mocks.grants.mockResolvedValue(new Map([[41, [{ addonId: "@acme/shop", role: "clerk" }, { addonId: "@acme/shop", role: "gone" }]]]));
 
@@ -553,7 +553,7 @@ describe("GET /api/site/admin/users?userId with Add-on roles", () => {
     mocks.available.mockResolvedValue(new Set(["@acme/shop"]));
     mocks.installed.mockReturnValue({
       "@acme/shop": {
-        enabled: true,
+        flags: 1,
         manifest: {
           addonId: "@acme/shop",
           roles: [{ name: "books", impliedBy: { siteAccess: "accounting" }, includes: ["clerk"] }, { name: "clerk" }],
@@ -583,8 +583,8 @@ describe("GET /api/site/admin/users with Add-on roles", () => {
     );
     mocks.available.mockResolvedValue(new Set([SHOP]));
     mocks.installed.mockReturnValue({
-      [SHOP]: { enabled: true, manifest: { addonId: SHOP, roles: SHOP_ROLES } },
-      "@acme/off": { enabled: true, manifest: { addonId: "@acme/off", roles: [{ name: "x" }] } },
+      [SHOP]: { flags: 1, manifest: { addonId: SHOP, roles: SHOP_ROLES } },
+      "@acme/off": { flags: 1, manifest: { addonId: "@acme/off", roles: [{ name: "x" }] } },
     });
     mocks.grants.mockResolvedValue(new Map([
       [10, [{ addonId: SHOP, role: "manager" }, { addonId: "@acme/off", role: "x" }, { addonId: SHOP, role: "retired" }]],
@@ -612,7 +612,7 @@ describe("GET /api/site/admin/users with Add-on roles", () => {
 
   it("shows beside them what a Site access implies, from the rows' Core roles, never for a Site Admin or a disabled member", async () => {
     mocks.installed.mockReturnValue({
-      [SHOP]: { enabled: true, manifest: { addonId: SHOP, roles: [{ ...SHOP_ROLES[0], impliedBy: { siteAccess: "accounting" } }, SHOP_ROLES[1]] } },
+      [SHOP]: { flags: 1, manifest: { addonId: SHOP, roles: [{ ...SHOP_ROLES[0], impliedBy: { siteAccess: "accounting" } }, SHOP_ROLES[1]] } },
     });
     mocks.grants.mockResolvedValue(new Map());
     vi.mocked(listAdminUsersForSite).mockResolvedValue({
@@ -640,7 +640,7 @@ describe("GET /api/site/admin/users with Add-on roles", () => {
 
   it("reads no capability snapshot for a page nobody on which has a grant or an implying access", async () => {
     mocks.installed.mockReturnValue({
-      [SHOP]: { enabled: true, manifest: { addonId: SHOP, roles: [{ ...SHOP_ROLES[0], impliedBy: { siteAccess: "accounting" } }, SHOP_ROLES[1]] } },
+      [SHOP]: { flags: 1, manifest: { addonId: SHOP, roles: [{ ...SHOP_ROLES[0], impliedBy: { siteAccess: "accounting" } }, SHOP_ROLES[1]] } },
     });
     mocks.grants.mockResolvedValue(new Map());
     vi.mocked(listAdminUsersForSite).mockResolvedValue({
@@ -696,7 +696,7 @@ describe("GET /api/site/admin/users with Add-on roles", () => {
   it("adds the Core roles of a Site access a matching role is implied by", async () => {
     mocks.installed.mockReturnValue({
       [SHOP]: {
-        enabled: true,
+        flags: 1,
         manifest: {
           addonId: SHOP,
           roles: [

@@ -28,13 +28,13 @@ All three take the internal token and `x-phis-site-key`; a browser never reaches
 |---|---|
 | `GET /api/v1/site/search?q=&areas=public,app&limit=` | The matching Pages, best first, in the request's locale (`x-locale`). `areas` names the Areas the Site decided this visitor may search; `public` alone by default. An Area outside Public and App is `400`. A `q` the contract calls too short answers an empty result. |
 | `GET /api/v1/site/search/index` | The sets phis holds of the Site: Area, locale, fingerprint, count, time. |
-| `PUT /api/v1/site/search/index` | One set, replacing what phis held of that Area and language: `{ area, locale, fingerprint, documents[] }`. Answers `accepted: false` when the fingerprint is the one already held and nothing was written. A document without an address is dropped and counted in `dropped`; the rest is written. |
+| `PUT /api/v1/site/search/index` | One set, replacing what phis held of that Area and language: `{ area, locale, fingerprint, documents[] }`. Answers `flags` without `Accepted` (`PhiSearchIndexWriteResultFlag`) when the fingerprint is the one already held and nothing was written. A document without an address is dropped and counted in `dropped`; the rest is written. |
 
 ## What phis promises
 
 - A set is replaced in one transaction: a visitor searching meanwhile sees the old set or the new one.
 - The set row is locked while it is replaced, so two Site processes offering the same fingerprint
-  produce one write and one `accepted: false`.
+  produce one write and one answer without `Accepted`.
 - Only the Public (`1`) and App (`2`) Areas are indexed; a set for another Area is refused.
 - The query is the words of `readPhiSearchQuery`, each matched as a prefix (`install` finds
   `installieren` and `installation`), all of them required. Nothing a visitor types reaches the text
@@ -44,7 +44,7 @@ All three take the internal token and `x-phis-site-key`; a browser never reaches
   part of stemming a reader expects.
 - Rank: title (`A`) over description (`B`) over body (`C`), then how close the words stand
   (`ts_rank_cd`). Ties by title, then path.
-- The snippet is `ts_headline` over the body, in pieces, each piece saying whether it is a matched word;
+- The snippet is `ts_headline` over the body, in pieces, each piece saying by its `flags` (`PhiSearchSnippetSegmentFlag.Match`) whether it is a matched word;
   empty where the match was in the title or description alone.
 - Deleting a Site drops its sets. Nothing else here is maintenance (AGENTS.md "Maintenance contract"):
   a set is replaced by the next publish the Site notices, and a set nobody replaces describes a Site

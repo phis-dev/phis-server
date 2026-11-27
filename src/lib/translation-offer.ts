@@ -1,5 +1,7 @@
 import "server-only";
 
+import { PhisTranslationProbeFlag } from "@phis/contracts/addon";
+
 import { getPhisConfigSync } from "@/lib/config";
 import { resolvePhiLocaleCapability } from "@/lib/locale";
 import {
@@ -88,7 +90,7 @@ async function resolveAddonTargetLocales() {
   // machinery has no business in the graph of an installation that translates with DeepL.
   const { probeTranslationAddon } = await import("@/lib/translation-addon");
   const probe = await probeTranslationAddon();
-  const targetLocales = probe?.usable
+  const targetLocales = probe && (probe.flags & PhisTranslationProbeFlag.Usable) !== 0
     ? normalizeSiteLocales(probe.targetLangs)
     : [];
   cachedProbe = { providerKey, secretReference, targetLocales };

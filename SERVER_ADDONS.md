@@ -422,8 +422,9 @@ is a deployment operation like the rest.
 ## 7. Install root and desired state
 
 An Add-on is one self-contained ESM artifact. `phis-cli` places it in the install root and records the
-entry -- its identity, its validated descriptors, and two digests -- in the operator-owned desired
-state. No Add-on is compiled into `@phis/server`, and there is no second mechanism beside this one.
+entry -- its identity, its validated descriptors, two digests and its `flags` (`PhisAddonInstallationFlag`,
+`Enabled` set by `phis addon enable`; an entry still carrying the earlier `enabled` is refused) -- in the
+operator-owned desired state. No Add-on is compiled into `@phis/server`, and there is no second mechanism beside this one.
 
 Self-contained is a requirement, not a recommendation. An artifact carries its dependencies and leaves
 no bare import behind except `node:` builtins, because Node resolves a bare specifier by walking up:
@@ -701,7 +702,7 @@ and assertion provenance are designed in [DIRECTORY_PROVIDERS.md](./design/DIREC
 A Media Source (`@phis/server/service/media-source`, `PhisMediaSourceAdapterV1` in
 `@phis/contracts/media-source`) is a stock archive, a DAM or a brand portal that the Media picker
 searches beside the Site's own library. Like Support Forwarding, nothing is configured in Core: every
-implementation that resolves for the Site and probes `usable` is offered, each source addressed as
+implementation that resolves for the Site and probes `Usable` (`PhisMediaSourceProbeFlag`) is offered, each source addressed as
 `<providerKey>#<key>`, and the factory is called with `(null, context)`. Core asks it to `list` a page
 and, when an item is chosen, to `take` it: the Add-on hands over bytes, never an address for Core to
 fetch, and Core imports them as an ordinary Asset of the Site Space. Nothing stores a reference into a
@@ -1153,7 +1154,7 @@ dispatch, by the job runner, and when its service factory is resolved.
 | `@phis/server/products:v1` | yes -- [`products:v1`](#productsv1) | the Site's product directory |
 | `@phis/server/cdn:v1` | yes -- [`cdn:v1`](#cdnv1) | the Site's CDN catalogue, read-only: copies and links |
 | `@phis/server/cdn-publish:v1` | yes -- [`cdn-publish:v1`](#cdn-publishv1) | importing a file into the Site's CDN from an address Core fetches, or recording it as a link |
-| `@phis/server/media:v1` | yes -- [`media:v1`](#mediav1) | Media library Assets by id: `servable`, `path` and what a media tile draws |
+| `@phis/server/media:v1` | yes -- [`media:v1`](#mediav1) | Media library Assets by id: `flags` (`Servable`), `path` and what a media tile draws |
 | `@phis/server/media-release:v1` | yes -- [`media-release:v1`](#media-releasev1) | giving up Media library Assets; Core deletes one nothing references |
 | `@phis/server/users:v1` | yes -- [`users:v1`](#usersv1) | a person of the Site, field by field by the acting person; the Site's address book |
 | `@phis/server/translations:v1` | yes -- [`translations:v1`](#translationsv1) | the Add-on's own words as source texts of the Site's translation store, read in a reader's language |
@@ -1739,8 +1740,7 @@ The design is [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.m
 
 - **Id.** `@scope/name:key`: the supplier's Add-on id and its own key (`^[a-z][a-z0-9.-]*$`, at most 96
   characters), so two Add-ons cannot name the same product. A product exists once per Site.
-- **Fields.** `supplier`, `supplied` (whether that Add-on is switched on for the Site and globally; where
-  it is not, nobody delivers), `publisher` (the supplier's reference for whose product it is, opaque to
+- **Fields.** `supplier`, `publisher` (the supplier's reference for whose product it is, opaque to
   Core; `null` is the Site's own), `type` (the supplier's own word), `title`, `summary`, `imageAssetId` (an
   Media Asset of the Site -- what `assets:v1` answers as `mediaAssetId` for a file in a slot of the supplier, or one
   of the Site's Media library -- set to `null` when the Asset is deleted; `register` refuses an Asset that is
@@ -1774,10 +1774,15 @@ The design is [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.m
   live or deleted, not one of another Site or none -- and is a row of the CMS reference index like a link in
   a Page, so moving the Page counts it and the Page's Scope cannot be removed while the button leads there;
   `remove` and a `register` without the link take the row along. A Module Page or an https address is kept
-  as given and indexes nothing, REFERENCES.md), `counted`, `sale` (`own`,
-  `referral` or `payout`), `referralUrl` (required, https, exactly for `referral`), `free`, `accountRequired` (can only be acquired with an account; Core does not enforce it, an entitlement entry always has a subject with an account), `parts` (the
-  ids of a bundle's parts), `state`, `released`, `pendingTerms`, `attributes`, `version`, the two
-  timestamps. Title, summary and description are written in the product's `sourceLocale` and read in it,
+  as given and indexes nothing, REFERENCES.md), `sale` (`own`,
+  `referral` or `payout`), `referralUrl` (required, https, exactly for `referral`), `flags` (`PhisProductFlag`:
+  `Counted` -- holding it has a quantity that adds up; `AccountRequired` -- it can only be acquired with an
+  account, which Core does not enforce, an entitlement entry always has a subject with an account; `Free`;
+  `Supplied` -- the supplying Add-on is switched on for the Site and globally, where it is not nobody
+  delivers; `Released` -- below. The first three are the supplier's statement, the last two Core's), `parts`
+  (the ids of a bundle's parts), `state`, `pendingTerms` (`{ sale, referralUrl, flags, parts }`, with only the
+  `PHIS_PRODUCT_TERMS_FLAG_MASK` bits `Free` and `AccountRequired` in `flags`), `attributes`, `version`, the
+  two timestamps. Title, summary and description are written in the product's `sourceLocale` and read in it,
   or in a reader's language with `locale` (**Words**, below). Core reads neither `type` nor `attributes`.
 - **Language.** Several suppliers or publishers may sell through one Site, each writing in their own
   language, so the language belongs to the product (`phis.products.source_locale`, null for the Site's).
@@ -1823,10 +1828,10 @@ The design is [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.m
   alone (`phis product lock|unlock`, or `POST /api/site/products/{id}/lock|unlock`). Only `active` can be
   acquired. A withdrawn product is held as it was; a locked one is held by nobody -- no entry for it counts
   while it is locked.
-- **Release.** A product with a `publisher` is `released` only after the Site operator released it
+- **Release.** A product with a `publisher` carries `Released` only after the Site operator released it
   (`phis product release`, or `POST /api/site/products/{id}/release` from the Accounting Area); until then
-  it cannot be `active`, and every field of it changes at once. The Site's own product (`publisher` null) needs none and is always `released`. Once released, a change of
-  `sale`, `referralUrl`, `free`, `accountRequired` or `parts` is held as `pendingTerms` and the terms in force stay until the
+  it cannot be `active`, and every field of it changes at once. The Site's own product (`publisher` null) needs none and always carries `Released`. Once released, a change of
+  `sale`, `referralUrl`, `Free`, `AccountRequired` or `parts` is held as `pendingTerms` and the terms in force stay until the
   operator releases it again; title, summary, picture and `type` change at once. Asking for the terms in
   force again takes a pending change back. A product's publisher does not change after it was registered:
   turning a released publisher's product into the Site's own would skip the release.
@@ -1851,10 +1856,11 @@ operator's release list: products not released, and released ones with pending t
 **Writing.** The supplier is the calling Add-on and is not a parameter, so a supplier writes its own
 products and another's is simply not found (`null`, `false`), not refused. `register` is idempotent on
 the key: the same draft twice changes nothing and does not raise `version`; the draft is the whole
-statement, and what it leaves out takes its default (`sale` `own`, no parts, not free, not counted, no
-picture). A new product starts as `draft`. `counted` is fixed once an entitlement entry names the product.
+statement, and what it leaves out takes its default (`sale` `own`, no parts, `flags` 0, no picture). The
+draft's `flags` carries `Counted`, `AccountRequired` and `Free` only; `Supplied` and `Released` are refused.
+A new product starts as `draft`. `Counted` is fixed once an entitlement entry names the product.
 `parts` are products that exist on the Site (of any supplier), none is the product itself, and nothing
-reaches the product again through its parts, pending parts included; a bundle is not `counted`.
+reaches the product again through its parts, pending parts included; a bundle is not `Counted`.
 `setState` moves between `draft`, `active` and `withdrawn`; `active` is refused for a publisher's product
 that is not released, and every move on a locked product is refused. `remove` removes a product that no
 entitlement entry ever named and that is no other product's part; otherwise it answers `false`. `annotate`
@@ -1870,7 +1876,7 @@ catalogue is public, while what is not yet or no longer in it (drafts, withdrawn
 terms awaiting release) is not. `entitlements:v1` stays closed to it entirely.
 
 **Manifest products.** An Add-on declares the products its package carries under
-`products: [{ key, type, title, summary, counted?, sale?, referralUrl?, free?, accountRequired?, parts? }]` (a publisher and
+`products: [{ key, type, title, summary, sale?, referralUrl?, flags?, parts? }]` (`flags` as a draft's) (a publisher and
 a picture or an icon are not declared; keys unique per manifest). When the Add-on is switched on for a Site
 (`phis addon site --enable`) and when a release is reconciled (`phis addon reconcile`), Core registers
 them at the Site: a new one as `active`, because the operator switched the Add-on on and the product is
@@ -2191,8 +2197,8 @@ Page's words are, by the same people, the same files and the same provider. `rec
   the configured provider's -- one request for the missing ones, told the stored context, the answers kept as a
   Widget's are -- and the text as written where `locale` is null, the texts' language or no language a
   translation is kept in, and for a text never recorded, which `translate` never records: what a public hook
-  reads, an administrator wrote. `provisional` says an answer is the text standing in for a provider that
-  failed. A public hook may translate; the hook hands `context.locale`.
+  reads, an administrator wrote. The answer's `flags` carries `Provisional` (`PhisTranslationResultFlag`)
+  where an answer is the text standing in for a provider that failed. A public hook may translate; the hook hands `context.locale`.
 - **The order a seller follows.** Record on save, translate where a visitor reads, never translate into the
   stored row. The Shop's listing hint is the first user (phis-shop README, "A listing's hint").
 - **At most** `PHIS_ADDON_TRANSLATION_TEXTS_MAX` texts per call, each at most `PHIS_ADDON_TRANSLATION_TEXT_MAX`
@@ -2259,27 +2265,27 @@ optional `credential` field naming one of the Add-on's own secrets is meant for 
 
 Assets of the Site's Media library by id, read-only: `get({ ids })`, at most 200 positive integer ids, answers
 `PhisMediaAssetV1[]` -- `id`, `name`, `title`, `contentType`, `byteSize`, `width`, `height`, `alt`,
-`servable`, `path`, `thumbnailPath`, `previewPath` and `blurDataUrl` -- each Asset once, in the order of its
+`flags` (`PhisMediaAssetV1Flag`), `path`, `thumbnailPath`, `previewPath` and `blurDataUrl` -- each Asset once, in the order of its
 first mention. It is for an Add-on that keeps Asset ids in its own `core.mediaAsset` columns (a cover, an
 icon, a gallery) and has to show them, or check on save that a visitor would be served one.
 
 Bound to the Site and to the calling Add-on. In reach is what `products:v1` accepts as a picture: an Asset of
 the Site's Space or of this Add-on's own Add-on Space. Anything else -- a User's or a Group's Space, another
 Add-on's, another Site, no Asset at all -- is left out of the answer, never refused, so the answer says nothing
-about what exists elsewhere. `servable` is the rest of `register`'s check: ready and delivered publicly.
+about what exists elsewhere. `Servable` is the rest of `register`'s check: ready and delivered publicly.
 `path` is Core's Media address with its cache revision, built where `imagePath` is built, and null exactly
-where `servable` is false; read it when it is used and do not store it.
+where `Servable` is not set; read it when it is used and do not store it.
 
 The rest is what the Foundation's media tile draws. `name` is the file name the Asset was uploaded or
 imported under, `title` and `alt` are in the Site's source language or null. `thumbnailPath` and
 `previewPath` are the addresses the Media library's own listing gives as `thumbnailUrl` and `previewUrl`,
 from the same builders: `/api/site/media/<id>/variants/<key>?r=<revision>&v=<variant version>`, for an Asset
 whose content type is an image only, since Core makes these variants of images alone. Both are null for
-any other Asset and wherever `servable` is false, and like `path` they carry revisions: read when used,
+any other Asset and wherever `Servable` is not set, and like `path` they carry revisions: read when used,
 never stored. `blurDataUrl` is the small blurred `data:` URL Core keeps for an image to show while it
 loads, null without one.
 
-An unverified hook is answered only servable Assets. Giving an Asset up is `media-release:v1`, a grant of its
+An unverified hook is answered only Assets carrying `Servable`. Giving an Asset up is `media-release:v1`, a grant of its
 own. Whether a row's picture belongs in such a column or in a slot of `assets:v1` is
 [ADDON_HOWTO.md, *A picture for an Add-on row*](./ADDON_HOWTO.md#a-picture-for-an-add-on-row-slot-or-media-library-reference).
 

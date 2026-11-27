@@ -69,7 +69,7 @@ describe("probing a Storage Profile on first use", () => {
 
     const probe = await ensurePhiMediaStorageProfileProbe(profile, site.key);
 
-    expect(probe?.writable).toBe(false);
+    expect(probe?.flags).toBe(0);
     expect(probe?.verifiedAlgorithms).toEqual([]);
     expect(probe?.findings.join(" ")).toMatch(/could not be reached/i);
 
@@ -99,7 +99,7 @@ describe("probing a Storage Profile on first use", () => {
       `UPDATE phis.media_storage_profiles
           SET probe = $2::jsonb, probed_at = NOW(), checksum_algorithm = 'sha256' WHERE id = $1`,
       [profile.id, JSON.stringify({
-        writable: true, verifiedAlgorithms: ["sha256"], findings: [],
+        flags: 1, verifiedAlgorithms: ["sha256"], findings: [],
       })],
     );
 

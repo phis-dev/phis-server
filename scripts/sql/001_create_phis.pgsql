@@ -2849,7 +2849,8 @@ CREATE INDEX IF NOT EXISTS addon_event_outbox_delivered_idx
 -- flags: 1 = counted, 2 = free, 4 = released, 8 = withdrawn because the supplier was switched off,
 -- 16 = declared by the supplier's manifest, 32 = account required. `sale`, `referral_url`, `free`,
 -- `account required` and `parts` are the terms in force; what a publisher asked to change of them on a
--- released product waits in `pending_terms` ({ sale, referralUrl, free, accountRequired, parts }) until the operator releases it. `image_asset_id` (the picture)
+-- released product waits in `pending_terms` ({ sale, referralUrl, flags, parts }, `flags` in PhisProductFlag
+-- bits: 2 = account required, 4 = free; not the column's bits) until the operator releases it. `image_asset_id` (the picture)
 -- and `icon_asset_id` (the small picture beside the title) each go to NULL when their Asset is deleted.
 -- `description` is the long text, Markdown, in the source language like `title` and `summary`; '' for none.
 -- `source_locale` is the language the three are written in, a locale key in the catalogue's spelling, NULL

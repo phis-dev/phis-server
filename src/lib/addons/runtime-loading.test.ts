@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { PhisAddonInstallationFlag } from "@phis/contracts/addon";
+
 import { PHIS_SERVICE_KINDS } from "./core-services";
 import { getPhisAddonInstalledManifest } from "./installed";
 import { resolvePhisServiceProvider } from "./services";
@@ -20,7 +22,7 @@ const installed = (() => {
     return {};
   }
 })();
-const s3Installed = Boolean(installed[S3_ADDON_ID]?.enabled);
+const s3Installed = ((installed[S3_ADDON_ID]?.flags ?? 0) & PhisAddonInstallationFlag.Enabled) !== 0;
 
 describe.skipIf(!s3Installed)("the installed S3 Add-on", () => {
   it("is read from the install root rather than from a build", () => {

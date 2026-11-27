@@ -66,7 +66,7 @@ function useTargets(targets: { providerKey: string; usable: boolean; label: stri
     providerKey: target.providerKey,
     providerId: PROVIDER_ID,
     adapter: {
-      probe: async () => ({ usable: target.usable, targets: [{ key: "acme/app", label: target.label }], findings: [] }),
+      probe: async () => ({ flags: target.usable ? 1 : 0, targets: [{ key: "acme/app", label: target.label }], findings: [] }),
       forward: async (request) => {
         forwarded.push(request);
         return { type: 1, externalId: `issue-${forwarded.length}-${index}`, url: "https://example.test/1", state: 0 };
@@ -82,7 +82,7 @@ function useLinkers() {
     providerKey: "elsewhere",
     providerId: "@test/elsewhere",
     adapter: {
-      probe: async () => ({ usable: true, targets: [], findings: [] }),
+      probe: async () => ({ flags: 1, targets: [], findings: [] }),
       forward: async () => { throw new Error("not used"); },
       lookup: async () => ({ status: "unknown" as const }),
       linked: async () => { throw new Error("not this one"); },
@@ -91,7 +91,7 @@ function useLinkers() {
     providerKey: "issues",
     providerId: PROVIDER_ID,
     adapter: {
-      probe: async () => ({ usable: true, targets: [{ key: "acme/app", label: "Tracker" }], findings: [] }),
+      probe: async () => ({ flags: 1, targets: [{ key: "acme/app", label: "Tracker" }], findings: [] }),
       forward: async () => ({ type: 1, externalId: "acme/app#7", url: null, state: 0 }),
       lookup: linkAnswer,
       linked: async (notice) => { announced.push(notice); },
@@ -171,7 +171,7 @@ describe("support forwarding", () => {
 
     await forwardSupportTicket({ site, ticketId: ticket.id, target: "issues#acme/app", title: null, actorUserId: supporter });
 
-    expect(forwarded[0]).toMatchObject({ target: "acme/app", mirror: false, body: null, task: { title: "Export fails" } });
+    expect(forwarded[0]).toMatchObject({ target: "acme/app", flags: 0, body: null, task: { title: "Export fails" } });
     const detail = (await getSupportTicketDetail(site.id, ticket.id))!;
     expect(detail.ticket.status).toBe(PhisSupportTicketStatus.WaitingInternal);
     expect(detail.tasks).toHaveLength(1);
@@ -265,12 +265,12 @@ describe("support forwarding", () => {
     const consentedSite = await createPhiTestSite("forward-consented");
     const consented = await openTicket(consentedSite, external, true);
     await forwardSupportTicket({ site: consentedSite, ticketId: consented.ticket.id, target: "issues#acme/app", title: "Bug", actorUserId: consented.supporter });
-    expect(forwarded[0]).toMatchObject({ mirror: true, body: "It fails with a 500.", task: { title: "Bug" } });
+    expect(forwarded[0]).toMatchObject({ flags: 1, body: "It fails with a 500.", task: { title: "Bug" } });
 
     const silentSite = await createPhiTestSite("forward-silent");
     const silent = await openTicket(silentSite, external, false);
     await forwardSupportTicket({ site: silentSite, ticketId: silent.ticket.id, target: "issues#acme/app", title: null, actorUserId: silent.supporter });
-    expect(forwarded[1]).toMatchObject({ mirror: true, body: null });
+    expect(forwarded[1]).toMatchObject({ flags: 1, body: null });
     expect((await getSupportTicketDetail(consentedSite.id, consented.ticket.id))!.outbound)
       .toEqual({ external: true, requesterConsent: true });
     expect((await getSupportTicketDetail(silentSite.id, silent.ticket.id))!.outbound)
@@ -291,7 +291,7 @@ describe("support forwarding", () => {
         site: staffSite, ticketId: created!.ticket.id, target: "issues#acme/app", title: null, actorUserId: staffSeed.supporter,
       });
     });
-    expect(forwarded.at(-1)).toMatchObject({ mirror: true, body: "Found in monitoring." });
+    expect(forwarded.at(-1)).toMatchObject({ flags: 1, body: "Found in monitoring." });
 
     // Mirrored, but the requester never agreed: their words stay, the Staff side leaves.
     await addThreadMessage({

@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { PhisMediaStorageProbeFlag } from "@phis/contracts/addon";
+
 import { PhisLocalMediaStorageAdapter } from "./media-storage.ts";
 
 /**
@@ -32,7 +34,7 @@ describe("probing the built-in storage", () => {
     const adapter = new PhisLocalMediaStorageAdapter({ rootDir: root, storageKeyPrefix: "sites" });
     const probe = await adapter.probeCapabilities();
     expect(probe).toEqual({
-      writable: true,
+      flags: PhisMediaStorageProbeFlag.Writable,
       // Nothing is delivered here by a client, so there is no claim to check and none is claimed.
       verifiedAlgorithms: [],
       findings: [],
@@ -60,7 +62,7 @@ describe("probing the built-in storage", () => {
     });
 
     const probe = await blocked.probeCapabilities();
-    expect(probe.writable).toBe(false);
+    expect(probe.flags & PhisMediaStorageProbeFlag.Writable).toBe(0);
     expect(probe.findings).toHaveLength(1);
     expect(probe.findings[0]).toMatch(/did not accept a write/u);
   });
