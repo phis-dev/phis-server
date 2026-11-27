@@ -6,7 +6,8 @@ import {
 import { listPhisPaymentRefunds, readPhisPayment, readPhisPaymentProfile } from "../../db/payments.mts";
 import { withPoolTransaction } from "../db-transaction.ts";
 import { PHIS_PAYMENT_CALL_TIMEOUT_MS, PHIS_PAYMENT_LEASE_SECONDS } from "../constants/payments.ts";
-import { PhisPaymentError, requirePhisPaymentMinor, requirePhisPaymentReference, validatePhisPaymentMoney } from "./validation.ts";
+import { PHIS_PAYMENT_CURRENCY_EXPONENTS, isPhisPaymentSettlementBalanced } from "@phis/contracts/payments";
+import { PhisPaymentError, requirePhisPaymentReference, validatePhisPaymentMoney } from "./validation.ts";
 import type { PhisPaymentProfile, PhisStoredPayment } from "./types.ts";
 
 /**
@@ -42,8 +43,9 @@ export function phisPaymentRecordRetry(task: Pick<PhisPaymentRecordTask, "attemp
 const ISO = (value: unknown) => typeof value === "string" && Number.isFinite(Date.parse(value));
 
 /**
- * The settlements a Provider reported for a payment, checked and given Core's ids: the money in the right
- * currencies, `net` the sum of the rest, a refund's record named by a refund Core knows. A record of a
+ * The settlements a Provider reported for a payment, checked and given Core's ids: gross in the payment's
+ * currency, the signed amounts in one settlement currency adding up, a refund's record (also a failed refund
+ * coming back) named by a refund Core knows. A record of a
  * refund Core has not observed yet is left for the next attempt.
  */
 export function readPhisPaymentProviderSettlements(payment: PhisStoredPayment, refunds: readonly { id: string; reference: string | null }[],
@@ -56,15 +58,13 @@ export function readPhisPaymentProviderSettlements(payment: PhisStoredPayment, r
   for (const record of records) {
     try {
       requirePhisPaymentReference(record.reference);
-      if (seen.has(record.reference) || (record.direction !== "credit" && record.direction !== "debit")) fail();
+      if (seen.has(record.reference)) fail();
       seen.add(record.reference);
-      for (const money of [record.gross, record.settled, record.fee, record.net, ...(record.withheldTax ? [record.withheldTax] : [])]) {
-        validatePhisPaymentMoney(money, false); requirePhisPaymentMinor(money.minor);
-      }
-      if (record.gross.currency !== payment.record.amount.currency) fail();
-      const currency = record.settled.currency;
-      if (record.fee.currency !== currency || record.net.currency !== currency || (record.withheldTax && record.withheldTax.currency !== currency)) fail();
-      if (BigInt(record.settled.minor) - BigInt(record.fee.minor) - BigInt(record.withheldTax?.minor ?? "0") !== BigInt(record.net.minor)) fail();
+      // Gross is the payment's or refund's magnitude in its own currency; the rest is signed from the
+      // merchant's side and must add up (`isPhisPaymentSettlementBalanced`, the contract's one sum check).
+      validatePhisPaymentMoney(record.gross, false);
+      if (record.gross.currency !== payment.record.amount.currency || !Object.hasOwn(PHIS_PAYMENT_CURRENCY_EXPONENTS, record.settled?.currency ?? "")
+        || !isPhisPaymentSettlementBalanced(record)) fail();
       if (record.exchangeRate !== null && (typeof record.exchangeRate !== "string" || !/^[0-9]{1,10}(\.[0-9]{1,10})?$/.test(record.exchangeRate)
         || Number(record.exchangeRate) <= 0)) fail();
       if ((record.availableAt !== null && !ISO(record.availableAt)) || !ISO(record.bookedAt)) fail();
@@ -75,7 +75,7 @@ export function readPhisPaymentProviderSettlements(payment: PhisStoredPayment, r
       if (!refund) { unknownRefund = true; continue; }
       refundId = refund.id;
     }
-    result.push({ refundId, direction: record.direction, reference: record.reference, gross: { ...record.gross }, settled: { ...record.settled }, fee: { ...record.fee },
+    result.push({ refundId, reference: record.reference, gross: { ...record.gross }, settled: { ...record.settled }, fee: { ...record.fee },
       withheldTax: record.withheldTax ? { ...record.withheldTax } : null, net: { ...record.net }, exchangeRate: record.exchangeRate,
       availableAt: record.availableAt === null ? null : new Date(record.availableAt).toISOString(), bookedAt: new Date(record.bookedAt).toISOString() });
   }

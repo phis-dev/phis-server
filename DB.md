@@ -2853,15 +2853,21 @@ and 16).
 
 ### `phis.payment_settlements`
 
-What one capture or refund moved on the merchant's balance at the Provider (`listSettlements`).
+What one balance movement of a payment did to the merchant's balance at the Provider (`listSettlements`):
+the capture, a refund (also a refund that failed and came back), a dispute.
 
 - `id UUID PRIMARY KEY`; `site_id`, `profile_key` (FK to the profile); `payment_id`, `refund_id NULL`
-  (`ON DELETE RESTRICT`); `direction` `credit` or `debit`; `provider_reference`, unique per Site and profile.
-- `gross_currency`, `gross_minor` (the payment's currency); `settled_currency` with `settled_minor`,
-  `fee_minor`, `withheld_tax_minor NULL` and `net_minor`, all `BIGINT >= 0` and checked
-  `net = settled − fee − COALESCE(withheld_tax, 0)`; `exchange_rate NUMERIC(20,10) NULL` (the Provider's
-  string, never used in arithmetic); `available_at NULL`, `booked_at`, `recorded_at`.
-- Never rewritten: a record seen again is not written, a correction is a further record.
+  (`ON DELETE RESTRICT`; NULL for the capture and its disputes); `provider_reference`, unique per Site and
+  profile. No `direction` (phis-contracts faa7330, owner 2026-11-27): the sign says it.
+- `gross_currency`, `gross_minor BIGINT >= 0` (the payment's or refund's magnitude in its own currency);
+  `settled_currency` with `settled_minor`, `fee_minor`, `withheld_tax_minor NULL` and `net_minor`, signed
+  `BIGINT` from the merchant's side (in positive, out negative; a fee charged positive, given back negative;
+  tax withheld positive, given back negative), checked `payment_settlements_balanced_check`:
+  `net_minor = settled_minor − fee_minor − COALESCE(withheld_tax_minor, 0)`; `exchange_rate NUMERIC(20,10) NULL`
+  (the Provider's string, never used in arithmetic); `available_at NULL`, `booked_at`, `recorded_at`.
+- Never rewritten: a record seen again is not written, a correction is a further record. The table is new
+  in 0.9; `30-payments-0.9.sql` creates it in this shape (the development database's was recreated so while
+  it held no row).
 
 ### `phis.payment_operations`
 

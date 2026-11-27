@@ -6,6 +6,18 @@ PAYMENTS.md is right. Decided by the owner on 2026-11-10: subscriptions are part
 not a capability of their own; Core runs the schedule, a Provider only stores a payment method and
 charges it; and whatever a Provider can or cannot do is a capability it declares per payment method.
 
+**Superseded in part on 2026-11-27 (phis-contracts 0.9).** Collection modes (`automatic`, `payment-request`,
+`provider-managed` prepared), the grace per subscription instead of the Site's, the end at the grace's end
+instead of `unpaid`, changes of terms with proration, Provider documents and settlement records were decided
+in the Shop's design [phis-shop/design/PLANS.md](../../phis-shop/design/PLANS.md) (sections 5 to 9, 11.2 and
+13.1) and are built as [PAYMENTS.md](../PAYMENTS.md) sections 13 to 16. Superseded here, read them there:
+section 4 (the declarations: now `collection`, `currency` and `documents` per pricing policy, flags instead of
+booleans), section 5 (the contract extension: `dunning` became `collection`, `onExhausted` and `unpaid` are
+gone, `graceDays`, `term` and `pendingChange` are new), section 6 (a renewal: also the `payment-request`
+period and its moments), section 7 (the scheduler), section 9 (billing documents: Core's `billing:v1`) and
+section 14 (the open questions on proration, plan changes and the grace, now decided). Sections 1 to 3, 8 and
+10 to 13 still give the reasoning that stands.
+
 - The first Provider's mapping: [phis-stripe/design/SUBSCRIPTIONS.md](../../phis-stripe/design/SUBSCRIPTIONS.md)
 - The first consumer: [phis-shop/design/SUBSCRIPTIONS.md](../../phis-shop/design/SUBSCRIPTIONS.md)
 
@@ -83,6 +95,9 @@ probe has declared the feature for that method (section 4), and a consumer disco
 
 ## 4. Declared capabilities, per payment method
 
+> Superseded on 2026-11-27: see the note at the top, [PAYMENTS.md](../PAYMENTS.md) sections 13 to 16 and
+> [PLANS.md](../../phis-shop/design/PLANS.md).
+
 `PhisPaymentFeatures` gains one member. `null` means the method cannot be stored, and that is the
 answer of every existing Provider build.
 
@@ -117,6 +132,9 @@ export type PhisPaymentFeatures = {
   charge; where it declares none, renewals use prices the consumer has computed (`final`, tax `none`).
 
 ## 5. The contract extension
+
+> Superseded on 2026-11-27: see the note at the top, [PAYMENTS.md](../PAYMENTS.md) sections 13 to 16 and
+> [PLANS.md](../../phis-shop/design/PLANS.md).
 
 A sketch; names and bounds are settled at promotion. All types live in `@phis/contracts/payments`.
 
@@ -201,6 +219,9 @@ Rules:
 
 ## 6. A renewal
 
+> Superseded on 2026-11-27: see the note at the top, [PAYMENTS.md](../PAYMENTS.md) sections 13 to 16 and
+> [PLANS.md](../../phis-shop/design/PLANS.md).
+
 When a period is due, Core:
 
 1. creates the period record for index `n` (unique per subscription and index);
@@ -237,6 +258,9 @@ the next charge.
 
 ## 7. The scheduler
 
+> Superseded on 2026-11-27: see the note at the top, [PAYMENTS.md](../PAYMENTS.md) sections 13 to 16 and
+> [PLANS.md](../../phis-shop/design/PLANS.md).
+
 A Core job, registered like the existing delivery jobs. On each run it claims subscriptions whose
 `nextChargeAt` has passed, with a fencing token, and performs section 6 for each.
 
@@ -264,6 +288,9 @@ A Core job, registered like the existing delivery jobs. On each run it claims su
   the payer has no other use for it; the retention rule is a structural question (section 14).
 
 ## 9. Billing documents and tax
+
+> Superseded on 2026-11-27: see the note at the top, [PAYMENTS.md](../PAYMENTS.md) sections 13 to 16 and
+> [PLANS.md](../../phis-shop/design/PLANS.md).
 
 Core records what was charged for which period, with the totals of PAYMENTS.md section 12. It issues no
 document and owns no number range.
@@ -322,6 +349,9 @@ payment meaning, and an operator grants subscriptions explicitly.
   database, the production Core included, gets the altered tables by hand SQL recorded in DB.md.
 
 ## 14. Open questions, each with the default this design builds on
+
+> Superseded on 2026-11-27: see the note at the top, [PAYMENTS.md](../PAYMENTS.md) sections 13 to 16 and
+> [PLANS.md](../../phis-shop/design/PLANS.md).
 
 1. **Billing documents**: issued and numbered by the consumer; Core keeps period records only. *Default:
    yes.*

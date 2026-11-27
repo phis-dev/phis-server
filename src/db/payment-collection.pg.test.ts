@@ -350,7 +350,7 @@ describe("subscriptions collected by request, changed, and what payments settled
   });
 
   describe("settlement records", () => {
-    const record = (patch: Record<string, unknown> = {}) => ({ direction: "credit" as const, reference: `txn_${randomUUID()}`, gross: { currency: "CHF", minor: "1990" },
+    const record = (patch: Record<string, unknown> = {}) => ({ reference: `txn_${randomUUID()}`, gross: { currency: "CHF", minor: "1990" },
       settled: { currency: "CHF", minor: "1990" }, fee: { currency: "CHF", minor: "60" }, withheldTax: null, net: { currency: "CHF", minor: "1930" }, exchangeRate: null,
       availableAt: "2026-12-04T00:00:00.000Z", bookedAt: "2026-11-27T10:00:00.000Z", refund: null, ...patch });
     async function capturedPayment() {
@@ -403,18 +403,27 @@ describe("subscriptions collected by request, changed, and what payments settled
       // Another consumer's payment is nobody's to read: answered as unknown.
       expect(await (await service(OTHER_CONSUMER, true)).listSettlements(paymentId)).toEqual([]);
 
-      // A refund owes its own record; the capture's, reported again with another fee, stays as it was.
+      // A refund owes its own records, signed from the merchant's side: the money going out with a fee of
+      // its own, the capture's fee given back, and a refund that failed coming back in -- all on the refund.
+      // The capture's record, reported again with another fee, stays as it was.
       const refund = await api.refund({ paymentId, idempotencyKey: randomUUID(), minor: "1990", reason: "Return" });
       expect((await tasks(paymentId)).map(task => [task.refund_id, task.state])).toEqual([[null, "done"], [refund.refund!.id, "pending"]]);
       const binding = (await listPhisPaymentRefunds(pool, paymentId))[0]!.binding!;
-      remote.settlements.set(paymentId, { state: "complete", records: [{ ...booked, fee: { currency: "CHF", minor: "99" }, net: { currency: "CHF", minor: "1891" } },
-        record({ direction: "debit", refund: binding, fee: { currency: "CHF", minor: "0" }, net: { currency: "CHF", minor: "1990" }, exchangeRate: "0.9312000000" })] });
+      const chf = (minor: string) => ({ currency: "CHF", minor });
+      const out = record({ refund: binding, settled: chf("-1990"), fee: chf("30"), net: chf("-2020"), exchangeRate: "0.9312000000" });
+      const feeBack = record({ refund: binding, gross: chf("0"), settled: chf("0"), fee: chf("-60"), net: chf("60") });
+      const cameBack = record({ refund: binding, settled: chf("1990"), fee: chf("0"), net: chf("1990"), bookedAt: "2026-11-28T10:00:00.000Z" });
+      remote.settlements.set(paymentId, { state: "complete", records: [{ ...booked, fee: chf("99"), net: chf("1891") }, out, feeBack, cameBack] });
       await collect();
       expect((await tasks(paymentId)).map(task => task.state)).toEqual(["done", "done"]);
-      const both = await staff.listSettlements(paymentId);
-      expect(both.map(entry => [entry.refundId, entry.direction, entry.fee.minor])).toEqual(
-        expect.arrayContaining([[null, "credit", "60"], [refund.refund!.id, "debit", "0"]]));
-      expect(both.find(entry => entry.direction === "debit")!.exchangeRate).toBe("0.9312");
+      const all = await staff.listSettlements(paymentId);
+      expect(all.map(entry => [entry.refundId, entry.settled.minor, entry.fee.minor, entry.net.minor])).toEqual(expect.arrayContaining([
+        [null, "1990", "60", "1930"], [refund.refund!.id, "-1990", "30", "-2020"], [refund.refund!.id, "0", "-60", "60"], [refund.refund!.id, "1990", "0", "1990"]]));
+      expect(all).toHaveLength(4);
+      expect(all.find(entry => entry.reference === out.reference)!.exchangeRate).toBe("0.9312");
+      expect(all.at(-1)!.reference).toBe(cameBack.reference);
+      // What the balance moved in sum: in 1930, out 2020, back 60 and 1990.
+      expect(all.reduce((sum, entry) => sum + BigInt(entry.net.minor), BigInt(0))).toBe(BigInt(1960));
     });
 
     it("refuses a record whose sums do not add up, and records nothing of the answer", async () => {
@@ -424,12 +433,15 @@ describe("subscriptions collected by request, changed, and what payments settled
       expect(await tasks(paymentId)).toMatchObject([{ state: "pending", attempts: 1 }]);
       expect((await tasks(paymentId))[0]!.last_error).toMatch(/inconsistent/);
       // Nor one in another settlement currency per amount, or in another gross currency than the payment's.
-      for (const bad of [record({ fee: { currency: "EUR", minor: "60" } }), record({ gross: { currency: "EUR", minor: "1990" } })]) {
+      // Nor a negative zero, a negative gross, or the old unsigned reading of a refund (settled positive, net its sum with a fee).
+      for (const bad of [record({ fee: { currency: "EUR", minor: "60" } }), record({ gross: { currency: "EUR", minor: "1990" } }),
+        record({ fee: { currency: "CHF", minor: "-0" }, net: { currency: "CHF", minor: "1990" } }), record({ gross: { currency: "CHF", minor: "-1990" } }),
+        record({ settled: { currency: "CHF", minor: "-1990" }, fee: { currency: "CHF", minor: "30" }, net: { currency: "CHF", minor: "-1960" } })]) {
         remote.settlements.set(paymentId, { state: "complete", records: [bad] });
         await due(paymentId); await collect();
       }
       expect(await (await service(CONSUMER, true)).listSettlements(paymentId)).toEqual([]);
-      expect(await tasks(paymentId)).toMatchObject([{ state: "pending", attempts: 3 }]);
+      expect(await tasks(paymentId)).toMatchObject([{ state: "pending", attempts: 6 }]);
     });
 
     it("gives a task up after 14 days", async () => {

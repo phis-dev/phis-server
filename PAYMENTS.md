@@ -881,10 +881,17 @@ currency); the column goes by hand (DB.md) and every profile is probed again in 
 
 ## 15. Records: what was settled
 
-Beside the documents (section 16) Core records per captured payment and per succeeded refund what the
-Provider settled on the merchant's balance (`PhisPaymentSettlement`: gross, settled, fee, withheld tax, net,
-exchange rate, available and booked at), where the payment's method declared
-`PhisPaymentCurrencyFeatureFlag.SettlementRecords` under the payment's policy.
+Beside the documents (section 16) Core records what each balance movement of a payment did to the merchant's
+balance at the Provider -- the capture, a refund, a refund that failed and came back, a dispute -- where the
+payment's method declared `PhisPaymentCurrencyFeatureFlag.SettlementRecords` under the payment's policy
+(`PhisPaymentSettlement`: gross, settled, fee, withheld tax, net, exchange rate, available and booked at).
+Since phis-contracts faa7330 (owner, 2026-11-27) the amounts are **signed from the merchant's side**
+(`PhisPaymentSignedMoney`) and there is no `direction`: `settled` positive where money came in, negative where
+it left; `fee` positive where the Provider charged one, negative where it gave one back; `withheldTax` positive
+where withheld, negative where given back, `null` where none; and `net = settled − fee − (withheldTax ?? 0)` in
+every case. A refund with a fee of its own is `settled −1000, fee 30, net −1030`; one that returns withheld tax
+`settled −1000, fee 0, withheldTax −81, net −919`; the failed refund coming back `settled 1000, net 1000` with
+the same `refundId`. `gross` stays the payment's or refund's magnitude in its own currency.
 
 - **Collecting.** The transaction that records a capture or a succeeded refund writes a task per kind the
   method declared (`phis.payment_record_tasks`: `settlements`, and `documents` where a declared kind is
@@ -894,10 +901,12 @@ exchange rate, available and booked at), where the payment's method declared
   or refund it stands for has a record; otherwise it is asked again after 5 minutes, 15 minutes, 1 hour,
   6 hours, then daily, for 14 days from the fact, and then given up (`failed`). A Provider that cannot be
   reached uses no attempt; an answer that is refused does.
-- **Checked.** Gross in the payment's currency; settled, fee, withheld tax and net in one settlement
-  currency; `net = settled − fee − withheldTax`; an exchange rate a positive decimal string that never enters
-  Core arithmetic; a refund's record named by a refund Core has observed (another waits for the next
-  attempt). An inconsistent answer is refused (`provider_unavailable`).
+- **Checked.** Gross a non-negative amount in the payment's currency; the record balanced by the contract's one
+  check, `isPhisPaymentSettlementBalanced` (signed minors without `-0`, one settlement currency, the sum exact
+  on integers), which the table repeats (`payment_settlements_balanced_check`); an exchange rate a positive
+  decimal string that never enters Core arithmetic; a refund's record named by a refund Core has observed
+  (another waits for the next attempt). An inconsistent answer is refused (`provider_unavailable`) and uses
+  an attempt.
 - **Read.** `listSettlements(paymentId)`, oldest first, under the grant `settlement-read` and only for an
   acting user with the Site role Admin or Accountant (`forbidden` otherwise, and for a job, an event, the
   operator and a hook). The customer sees only what they paid (`totals`) and, where converted,

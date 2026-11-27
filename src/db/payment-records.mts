@@ -82,7 +82,7 @@ export async function retryPhisPaymentRecordTasks(db: Db, siteId: number, paymen
 }
 
 type SettlementRow = {
-  id: string; payment_id: string; refund_id: string | null; direction: "credit" | "debit"; provider_reference: string;
+  id: string; payment_id: string; refund_id: string | null; provider_reference: string;
   gross_currency: string; gross_minor: string; settled_currency: string; settled_minor: string; fee_minor: string;
   withheld_tax_minor: string | null; net_minor: string; exchange_rate: string | null; available_at: Date | null; booked_at: Date; recorded_at: Date;
 };
@@ -90,7 +90,7 @@ type SettlementRow = {
 function settlementFromRow(row: SettlementRow): PhisPaymentSettlement {
   const settled = (minor: string) => ({ currency: row.settled_currency, minor });
   return {
-    id: row.id, paymentId: row.payment_id, refundId: row.refund_id, direction: row.direction, reference: row.provider_reference,
+    id: row.id, paymentId: row.payment_id, refundId: row.refund_id, reference: row.provider_reference,
     gross: { currency: row.gross_currency, minor: row.gross_minor }, settled: settled(row.settled_minor), fee: settled(row.fee_minor),
     withheldTax: row.withheld_tax_minor === null ? null : settled(row.withheld_tax_minor), net: settled(row.net_minor),
     // NUMERIC answers trailing zeros; the Provider's string had none it needed.
@@ -101,7 +101,7 @@ function settlementFromRow(row: SettlementRow): PhisPaymentSettlement {
 
 /** Oldest first, as booked. */
 export async function listPhisPaymentSettlements(db: Db, siteId: number, paymentId: string): Promise<PhisPaymentSettlement[]> {
-  const { rows } = await db.query<SettlementRow>(`SELECT id::text, payment_id::text, refund_id::text, direction, provider_reference, gross_currency,
+  const { rows } = await db.query<SettlementRow>(`SELECT id::text, payment_id::text, refund_id::text, provider_reference, gross_currency,
       gross_minor::text, settled_currency, settled_minor::text, fee_minor::text, withheld_tax_minor::text, net_minor::text, exchange_rate::text,
       available_at, booked_at, recorded_at
     FROM phis.payment_settlements WHERE site_id = $1 AND payment_id::text = $2 ORDER BY booked_at, recorded_at, id LIMIT 500`, [siteId, paymentId]);
@@ -109,8 +109,8 @@ export async function listPhisPaymentSettlements(db: Db, siteId: number, payment
 }
 
 /**
- * Records settlements as the Provider reported them, each once by its reference per profile; a record seen
- * before is never rewritten. The caller has checked the sums. Answers how many were new.
+ * Records settlements as the Provider reported them, signed from the merchant's side, each once by its
+ * reference per profile; a record seen before is never rewritten. The caller has checked the sum. Answers how many were new.
  */
 export async function insertPhisPaymentSettlements(db: Db, input: {
   siteId: number; profileKey: string; paymentId: string;
@@ -118,11 +118,11 @@ export async function insertPhisPaymentSettlements(db: Db, input: {
 }): Promise<number> {
   let inserted = 0;
   for (const record of input.records) {
-    const { rowCount } = await db.query(`INSERT INTO phis.payment_settlements (id, site_id, profile_key, payment_id, refund_id, direction, provider_reference,
+    const { rowCount } = await db.query(`INSERT INTO phis.payment_settlements (id, site_id, profile_key, payment_id, refund_id, provider_reference,
         gross_currency, gross_minor, settled_currency, settled_minor, fee_minor, withheld_tax_minor, net_minor, exchange_rate, available_at, booked_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::bigint, $10, $11::bigint, $12::bigint, $13::bigint, $14::bigint, $15::numeric, $16, $17)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8::bigint, $9, $10::bigint, $11::bigint, $12::bigint, $13::bigint, $14::numeric, $15, $16)
       ON CONFLICT (site_id, profile_key, provider_reference) DO NOTHING`,
-    [randomUUID(), input.siteId, input.profileKey, input.paymentId, record.refundId, record.direction, record.reference,
+    [randomUUID(), input.siteId, input.profileKey, input.paymentId, record.refundId, record.reference,
       record.gross.currency, record.gross.minor, record.settled.currency, record.settled.minor, record.fee.minor, record.withheldTax?.minor ?? null,
       record.net.minor, record.exchangeRate, record.availableAt, record.bookedAt]);
     inserted += rowCount ?? 0;

@@ -4384,11 +4384,11 @@ async function main() {
   if (group === "addon" && command === "migrate") {
     const providers = await readPhisPaymentProviderRegistrations(configRoot, getPool());
     const result = await migrateAddons(configRoot, flags, getMigrationPool(), getServingRole());
-    const paymentReach = await reprobeUpgradedPhisPaymentProviders(configRoot, getPool(), providers, readPaymentSecret);
+    const paymentFeatures = await reprobeUpgradedPhisPaymentProviders(configRoot, getPool(), providers, readPaymentSecret);
     if (json) {
-      printJson({ ...result, paymentReach });
+      printJson({ ...result, paymentFeatures });
     } else {
-      reportPaymentReprobe(paymentReach);
+      reportPaymentReprobe(paymentFeatures);
       for (const outcome of result.outcomes) {
         if (outcome.action === "no-schema") {
           console.log(`${outcome.addonId} owns no tables.`);
@@ -5050,14 +5050,14 @@ async function main() {
   if (group === "addon" && command === "reconcile") {
     const providers = await readPhisPaymentProviderRegistrations(configRoot, getPool());
     const result = await reconcileAddons(configRoot, flags, getPool());
-    const paymentReach = await reprobeUpgradedPhisPaymentProviders(configRoot, getPool(), providers, readPaymentSecret);
+    const paymentFeatures = await reprobeUpgradedPhisPaymentProviders(configRoot, getPool(), providers, readPaymentSecret);
     if (json) {
-      printJson({ ...result, paymentReach });
+      printJson({ ...result, paymentFeatures });
     } else {
       console.log(
         `Reconciled release ${result.releaseBuildId} with ${result.addons.length} server Add-on(s).`,
       );
-      reportPaymentReprobe(paymentReach);
+      reportPaymentReprobe(paymentFeatures);
     }
     return;
   }

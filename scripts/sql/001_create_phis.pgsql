@@ -2850,32 +2850,34 @@ CREATE TABLE IF NOT EXISTS phis.payment_record_tasks (
 CREATE INDEX IF NOT EXISTS payment_record_tasks_due_idx
   ON phis.payment_record_tasks (next_attempt_at) WHERE state = 'pending';
 
--- What one capture or refund moved on the merchant's balance at the Provider (`payments:v1`
--- `listSettlements`), recorded by Core and never rewritten: a later correction is a further record. The
--- four settlement amounts share `settled_currency`; `exchange_rate` is the Provider's string, never used in
--- arithmetic.
+-- What one balance movement of a payment did to the merchant's balance at the Provider (`payments:v1`
+-- `listSettlements`): a capture, a refund (with `refund_id`, also a failed refund coming back), a dispute.
+-- Recorded by Core and never rewritten: a later correction is a further record. `settled`, `fee`,
+-- `withheld_tax` and `net` are signed from the merchant's side in one `settled_currency` (in positive, out
+-- negative; a fee charged positive, given back negative; tax withheld positive, given back negative), and
+-- `net = settled - fee - withheld_tax` always; `gross` is the payment's or refund's magnitude in its own
+-- currency. `exchange_rate` is the Provider's string, never used in arithmetic.
 CREATE TABLE IF NOT EXISTS phis.payment_settlements (
   id UUID PRIMARY KEY,
   site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE RESTRICT,
   profile_key VARCHAR(64) NOT NULL,
   payment_id UUID NOT NULL REFERENCES phis.payments(id) ON DELETE RESTRICT,
   refund_id UUID NULL REFERENCES phis.payment_refunds(id) ON DELETE RESTRICT,
-  direction VARCHAR(6) NOT NULL CHECK (direction IN ('credit','debit')),
   provider_reference VARCHAR(255) NOT NULL,
   gross_currency CHAR(3) NOT NULL,
   gross_minor BIGINT NOT NULL CHECK (gross_minor >= 0),
   settled_currency CHAR(3) NOT NULL,
-  settled_minor BIGINT NOT NULL CHECK (settled_minor >= 0),
-  fee_minor BIGINT NOT NULL CHECK (fee_minor >= 0),
-  withheld_tax_minor BIGINT NULL CHECK (withheld_tax_minor >= 0),
-  net_minor BIGINT NOT NULL CHECK (net_minor >= 0),
+  settled_minor BIGINT NOT NULL,
+  fee_minor BIGINT NOT NULL,
+  withheld_tax_minor BIGINT NULL,
+  net_minor BIGINT NOT NULL,
   exchange_rate NUMERIC(20,10) NULL CHECK (exchange_rate > 0),
   available_at TIMESTAMPTZ NULL,
   booked_at TIMESTAMPTZ NOT NULL,
   recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   FOREIGN KEY (site_id, profile_key) REFERENCES phis.payment_profiles(site_id, key) ON DELETE RESTRICT,
   UNIQUE (site_id, profile_key, provider_reference),
-  CHECK (net_minor = settled_minor - fee_minor - COALESCE(withheld_tax_minor, 0))
+  CONSTRAINT payment_settlements_balanced_check CHECK (net_minor = settled_minor - fee_minor - COALESCE(withheld_tax_minor, 0))
 );
 CREATE INDEX IF NOT EXISTS payment_settlements_payment_idx ON phis.payment_settlements (payment_id, booked_at);
 

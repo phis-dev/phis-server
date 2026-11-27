@@ -1678,7 +1678,7 @@ Stripe endpoint signing secret and validate real notification delivery before re
 When `phis addon migrate` or `phis addon reconcile` registers a new release of a payment Provider Add-on
 (after `phis addon upgrade`), every enabled profile it serves is probed again in each currency it was last
 recorded in. A profile or currency that cannot be asked -- a missing secret, a Provider that does not
-answer, another merchant -- keeps what was recorded before and is reported as a warning (`paymentReach`
+answer, another merchant -- keeps what was recorded before and is reported as a warning (`paymentFeatures`
 in the JSON output); the command itself still succeeds.
 
 Before v1 the recording has one shape. A profile recorded before phis-contracts 0.9 held `methods` (a probe
