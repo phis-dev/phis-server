@@ -1,3 +1,11 @@
+phis (0.9.1-1) unstable; urgency=medium
+
+  * Build the CLI without querying or recording Site UI versions.
+  * Resolve Site versions only from the registry at runtime; refuse missing
+    registry access, matching UI releases or tested package versions clearly.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Fri, 27 Nov 2026 15:18:01 +0000
+
 phis (0.9.0-1) unstable; urgency=medium
 
   * Needs @phis/contracts 0.9.0; record states use flags.
