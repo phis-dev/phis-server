@@ -2486,7 +2486,7 @@ async function runSiteScaffoldCommand(
     runtime = { publicBaseUrl: site.publicBaseUrl ?? `https://${site.hostname}`, apiBaseUrl, internalToken };
   }
   // The pins come from `@phis/ui`, never from this CLI: the newest of the Server's line and the versions it
-  // states it was tested with, or the set recorded when this CLI was built (src/lib/site-versions.mts).
+  // states it was tested with, both from the registry at runtime (src/lib/site-versions.mts).
   const siteVersions = await resolvePhiSiteScaffoldVersions({
     serverVersion: packageJson.version,
     siteRoot: path.resolve(root),
@@ -2494,9 +2494,7 @@ async function runSiteScaffoldCommand(
   });
   // Only `init` pins everything; a reconcile's versions reach a dependency the Site lacks, and none is usual.
   if (!json && mode === "init") {
-    console.log(siteVersions.source === "registry"
-      ? `Site versions: @phis/ui ${siteVersions.uiVersion} and the versions it was tested with, from the npm registry.`
-      : `Site versions: @phis/ui ${siteVersions.uiVersion}, the rest as recorded when this phis was built (${siteVersions.reason}).`);
+    console.log(`Site versions: @phis/ui ${siteVersions.uiVersion} and the versions it was tested with, from the npm registry.`);
   }
   const result = await reconcilePhiSiteScaffold(root, {
     siteKey: site.key,

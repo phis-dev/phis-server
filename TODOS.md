@@ -50,11 +50,11 @@ INSTALL.md/CLI.md (report with logs on that host under `/root/phis-reinstall-202
 login work; the documented path to a served Site does not.
 
 - **Re-run the fresh path once the fixes are released.** The scaffold's pins now come from `@phis/ui`
-  (`phis.testedWith`, newest `@phis/ui` of the Server's line, a set recorded at `build:cli` as fallback), a
+  (`phis.testedWith`, newest `@phis/ui` of the Server's line, queried only at runtime), a
   repeated `phis install` keeps a TLS proxy, and `config/site-runtime.json` is written 0600 (2026-11-25).
-  Release `@phis/ui` with the field before the Server -- the Server's release build records its fallback
-  from the registry and stops without it -- then repeat the phisys path through `phis update` to a release
-  and a running Site.
+  The Server release build is independent of UI releases. Before running `init` or `update`, publish a
+  matching UI with valid tested versions and ensure registry access; missing runtime data stops the command.
+  Then repeat the phisys path through `phis update` to a release and a running Site.
 - **`sanitize-html` 2.18.2 is not released yet.** The fresh Site's `npm audit` listed moderate advisories
   fixed in 2.18.0 (GHSA-x3q4-9hxx-gx8m, GHSA-374f-7chj-9948, GHSA-cv27-6wvh-8x7j) against the 2.17.7 pin;
   the Server and `@phis/ui` pin 2.18.2 since package update round 1 (2026-11-25). The re-run above checks

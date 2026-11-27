@@ -619,11 +619,12 @@ published in the Server's Major.Minor line; beside it stand the versions that `@
 from `npm view` run in the Site's directory, so the npm configuration (registry, auth, proxy) applies;
 one try with a bounded wait. Without `npm_config_cache` in the environment, `npm view` caches in
 `/var/cache/phis-npm` when that directory exists and is writable -- the `phis` account has no home for
-npm's default `~/.npm` -- and in npm's default otherwise. When the registry cannot be asked or the chosen `@phis/ui` states no
-`phis.testedWith`, the set recorded when this CLI was built answers: `pnpm build:cli` takes it from the
-registry's newest `@phis/ui` of the line that states one, else from a phis-ui checkout beside phis-server
-(or `PHIS_UI_ROOT`), and refuses to build with neither. `init` prints which applied and why (JSON
-`siteVersions`: `uiVersion`, `packages`, `source` `registry` or `fallback`, `reason`).
+npm's default `~/.npm` -- and in npm's default otherwise. Registry access is required at runtime.
+If the registry cannot answer, no UI release exists in the Server's line, or the selected version lacks
+valid `phis.testedWith`, the command stops with an English error and an operator action. Restore registry
+access or publish a matching UI release with exact tested package versions, then retry. Server builds
+never query the UI registry, inspect a UI checkout or record replacement versions. `init` reports JSON
+`siteVersions` with `uiVersion`, `packages` and `source: "registry"`.
 
 ### `phis reconcile <site key>`
 

@@ -398,8 +398,8 @@ phis init acme --path /srv/phis/sites/acme --api-base-url http://127.0.0.1:5301
   `@phis/server`, as seen from the host the Site runs on. The Debian package serves on
   `http://127.0.0.1:5301`. Only `init` writes it into `config/site-runtime.json`.
 - `--package-manager` defaults to `npm` for a new Site.
-- `init` prints which `@phis/ui` it pinned, and whether the rest came from the registry or from the set
-  recorded at build time (JSON `siteVersions`).
+- `init` prints which `@phis/ui` it pinned and its registry-provided tested package versions
+  (JSON `siteVersions`, source `registry`).
 
 What `init` writes (scaffold version 3):
 
@@ -431,9 +431,10 @@ the Server's Major.Minor line (phis 0.8.x takes the newest `@phis/ui` 0.8.x; con
 registry with `npm view`, in the Site's directory, so the npm configuration applies (`registry`, scope
 registries, auth, proxy). npm caches under the home directory, and the `phis` service account has none;
 when the environment sets no `npm_config_cache`, those calls use `/var/cache/phis-npm` if it exists and
-is writable (the Debian package creates it, owned by `phis`; elsewhere `install -d -o phis -g phis /var/cache/phis-npm`), else npm's default. When the registry cannot be asked, or the chosen `@phis/ui` states no
-`phis.testedWith` (0.8.1 and earlier), `init` takes the set recorded when this `phis` was built and says
-so. A Site created by hand from a clone takes its versions from its own `package.json`.
+is writable (the Debian package creates it, owned by `phis`; elsewhere `install -d -o phis -g phis /var/cache/phis-npm`), else npm's default. If the registry cannot answer, has no UI release in the Server's line, or the
+selected version lacks valid `phis.testedWith`, the command stops. Check registry access or publish a
+matching UI release with exact tested package versions, then retry. The Server build does not query
+or record UI versions. A Site created by hand from a clone takes its versions from its own `package.json`.
 
 `src/generated/` is ignored by git as well. The projection is what the operator installed, and its
 source is the desired state in the phis root (`config/phis-modules.json`), not the Site's history: a

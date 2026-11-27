@@ -9,18 +9,14 @@
  * by hand; it fell months behind, and a clean install pinned a `next` that Next refuses to build.
  *
  * The registry is asked through `npm view`, so the operator's npm configuration -- registry, scope
- * registries, auth, proxy -- applies as it does to the install that follows. When the registry cannot be
- * asked, or the chosen version carries no `phis.testedWith` (0.8.1 and earlier), the set recorded when this
- * CLI was built answers instead (`scripts/build-cli.mjs`, from `readPhiSiteVersionsAtBuild`).
- *
- * Node built-ins only: `scripts/build-cli.mjs` imports this file as it is.
+ * registries, auth, proxy -- applies as it does to the install that follows. Resolution happens only
+ * at runtime. Missing registry data stops the command; builds never query or record Site versions.
  */
 
 import { spawn } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import { access, readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 export const PHI_UI_PACKAGE = "@phis/ui";
 /** Where in `@phis/ui`'s `package.json` the tested versions stand, as `npm view` names a nested field. */
@@ -33,10 +29,7 @@ export type PhiSiteVersionSet = {
 };
 
 export type PhiSiteVersionsResolution = PhiSiteVersionSet & {
-  /** `registry`: the chosen `@phis/ui` stated them; `fallback`: the set recorded when this CLI was built. */
-  source: "registry" | "fallback";
-  /** Why the fallback answered; absent when the registry did. */
-  reason?: string;
+  source: "registry";
 };
 
 /** What the registry is asked. `readField` answers `undefined` for a field the version does not carry. */
@@ -116,58 +109,38 @@ export function readPhiTestedWith(value: unknown): Record<string, string> | null
   return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b))) as Record<string, string>;
 }
 
-/** A recorded set as the build wrote it, or null for anything else. */
-export function readPhiSiteVersionSet(value: unknown): PhiSiteVersionSet | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const record = value as { uiVersion?: unknown; packages?: unknown };
-  const packages = readPhiTestedWith(record.packages);
-  return isPhiExactVersion(record.uiVersion) && packages ? { uiVersion: record.uiVersion, packages } : null;
-}
-
 function describeError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-/**
- * The versions a Site is pinned to.
- *
- * `uiVersion` names the `@phis/ui` to read the tested versions of -- a Site that pins one exactly already
- * has its own -- and is otherwise the newest of the Server's line. A registry that answers with the field
- * wins; a version without it takes the recorded packages beside the chosen `@phis/ui`; a registry that
- * cannot be asked, or has nothing in the line, takes the recorded set whole. Without a recorded set (a
- * CLI run from source with neither a registry nor a phis-ui checkout beside it) that is an error.
- */
+/** Resolve Site versions only from runtime registry data, retaining an existing exact UI pin. */
 export async function resolvePhiSiteVersions(input: {
   serverVersion: string;
   registry: PhiPackageRegistry;
-  fallback: PhiSiteVersionSet | null;
   uiVersion?: string | null;
 }): Promise<PhiSiteVersionsResolution> {
-  const answerWithFallback = (reason: string, uiVersion?: string): PhiSiteVersionsResolution => {
-    if (!input.fallback) {
-      throw new Error(
-        `${reason}, and this phis carries no Site versions recorded at build time. Run it from a build ` +
-        "(pnpm build:cli), with a phis-ui checkout beside phis-server, or where the npm registry answers.",
-      );
-    }
-    return { uiVersion: uiVersion ?? input.fallback.uiVersion, packages: input.fallback.packages, source: "fallback", reason };
-  };
   const anchored = input.uiVersion && isPhiExactVersion(input.uiVersion) ? input.uiVersion : null;
-  let answer: { chosen: string | null; packages: Record<string, string> | null } | { error: string };
+  let chosen: string | null;
+  let packages: Record<string, string> | null;
   try {
-    const chosen = anchored
+    chosen = anchored
       ?? selectPhiUiVersionInLine(await input.registry.listVersions(PHI_UI_PACKAGE), input.serverVersion);
-    const packages = chosen
+    packages = chosen
       ? readPhiTestedWith(await input.registry.readField(PHI_UI_PACKAGE, chosen, PHI_UI_TESTED_WITH_FIELD))
       : null;
-    answer = { chosen, packages };
   } catch (error) {
-    answer = { error: describeError(error) };
+    throw new Error(`The npm registry could not be asked (${describeError(error)}). ` +
+      "Check registry access, npm authentication and proxy settings, then retry the command.");
   }
-  if ("error" in answer) return answerWithFallback(`the npm registry could not be asked (${answer.error})`, anchored ?? undefined);
-  if (!answer.chosen) return answerWithFallback(`the registry has no ${PHI_UI_PACKAGE} in the line of phis ${input.serverVersion}`);
-  if (answer.packages) return { uiVersion: answer.chosen, packages: answer.packages, source: "registry" };
-  return answerWithFallback(`${PHI_UI_PACKAGE} ${answer.chosen} states no ${PHI_UI_TESTED_WITH_FIELD}`, answer.chosen);
+  if (!chosen) {
+    throw new Error(`The registry has no ${PHI_UI_PACKAGE} in the line of phis ${input.serverVersion}. ` +
+      "Publish a matching UI release to the configured registry before retrying the command.");
+  }
+  if (!packages) {
+    throw new Error(`${PHI_UI_PACKAGE} ${chosen} states no valid ${PHI_UI_TESTED_WITH_FIELD}. ` +
+      "Publish a UI release with exact tested package versions and select it before retrying the command.");
+  }
+  return { uiVersion: chosen, packages, source: "registry" };
 }
 
 /** The versions as the scaffold writes them: `@phis/ui` beside the packages it was tested with. */
@@ -181,7 +154,7 @@ const NPM_VIEW_TIMEOUT_MS = 30_000;
  * The npm cache `npm view` uses when the environment names none.
  *
  * npm caches under `~/.npm`, and the `phis` service account has no home (`/nonexistent`): every `npm view`
- * it ran failed with EACCES, and `init` fell back to the recorded set without ever asking the registry.
+ * it ran failed with EACCES, before Site versions could be resolved.
  * An operator who creates this directory for the account (`install -d -o phis -g phis /var/cache/phis-npm`)
  * gives those calls a cache; without it npm keeps its default, which serves every account with a home.
  */
@@ -217,8 +190,8 @@ export async function resolvePhiNpmViewEnvironment(
 
 function runNpmView(args: readonly string[], cwd: string, timeoutMs: number, env: PhiProcessEnvironment) {
   return new Promise<string>((resolve, reject) => {
-    // One try, a bounded wait: an unreachable registry falls back instead of holding `phis init` for the
-    // minutes npm's own retries take.
+    // One try, a bounded wait: an unreachable registry fails clearly instead of holding the command
+    // for the minutes npm's own retries take.
     const child = spawn("npm", ["view", ...args, "--json", "--fetch-retries=0", `--fetch-timeout=${Math.min(timeoutMs, 15_000)}`], {
       cwd,
       // Next's types demand NODE_ENV of every ProcessEnv; npm needs none of it.
@@ -276,86 +249,6 @@ export function createPhiNpmViewRegistry(options: { cwd: string; timeoutMs?: num
   };
 }
 
-/**
- * A phis-ui checkout's own statement, from its `package.json` -- which phis-ui's verification holds to
- * what that checkout has installed. Throws with the reason when it is not in the Server's line or states
- * nothing.
- */
-export async function readPhiUiCheckoutVersions(uiRoot: string, serverVersion: string): Promise<PhiSiteVersionSet> {
-  const manifestFile = path.join(uiRoot, "package.json");
-  let manifest: { name?: unknown; version?: unknown; phis?: { testedWith?: unknown } };
-  try {
-    manifest = JSON.parse(await readFile(manifestFile, "utf8")) as typeof manifest;
-  } catch (error) {
-    throw new Error(`${manifestFile} could not be read (${describeError(error)})`);
-  }
-  if (manifest.name !== PHI_UI_PACKAGE || !isPhiExactVersion(manifest.version)) {
-    throw new Error(`${manifestFile} is no ${PHI_UI_PACKAGE} manifest`);
-  }
-  if (selectPhiUiVersionInLine([manifest.version], serverVersion) !== manifest.version) {
-    throw new Error(`${manifestFile} is ${PHI_UI_PACKAGE} ${manifest.version}, outside the line of ${serverVersion}`);
-  }
-  const packages = readPhiTestedWith(manifest.phis?.testedWith);
-  if (!packages) throw new Error(`${manifestFile} states no ${PHI_UI_TESTED_WITH_FIELD}`);
-  return { uiVersion: manifest.version, packages };
-}
-
-/**
- * The set `scripts/build-cli.mjs` records into the bundle, for when the registry cannot answer at run time.
- *
- * The registry's newest `@phis/ui` of the line, when it states its tested versions -- that is what a
- * release build in GitHub finds, `@phis/ui` being released before the Server. Otherwise a phis-ui checkout
- * beside phis-server (or at `PHIS_UI_ROOT`), as `readPhiUiCheckoutVersions` reads it. Neither is an error
- * naming both reasons: a CLI built without a set would fail the first offline `phis init` instead.
- */
-export async function readPhiSiteVersionsAtBuild(input: {
-  serverVersion: string;
-  registry: PhiPackageRegistry;
-  uiRoot: string;
-}): Promise<PhiSiteVersionSet & { source: string }> {
-  const reasons: string[] = [];
-  try {
-    const chosen = selectPhiUiVersionInLine(await input.registry.listVersions(PHI_UI_PACKAGE), input.serverVersion);
-    if (chosen) {
-      const packages = readPhiTestedWith(await input.registry.readField(PHI_UI_PACKAGE, chosen, PHI_UI_TESTED_WITH_FIELD));
-      if (packages) return { uiVersion: chosen, packages, source: `the registry's ${PHI_UI_PACKAGE} ${chosen}` };
-      reasons.push(`the registry's ${PHI_UI_PACKAGE} ${chosen} states no ${PHI_UI_TESTED_WITH_FIELD}`);
-    } else {
-      reasons.push(`the registry has no ${PHI_UI_PACKAGE} in the line of ${input.serverVersion}`);
-    }
-  } catch (error) {
-    reasons.push(`the registry could not be asked (${describeError(error)})`);
-  }
-  try {
-    return { ...await readPhiUiCheckoutVersions(input.uiRoot, input.serverVersion), source: path.join(input.uiRoot, "package.json") };
-  } catch (error) {
-    reasons.push(describeError(error));
-  }
-  throw new Error(`No Site versions to record: ${reasons.join("; ")}.`);
-}
-
-/** Where a phis-ui checkout is looked for: `PHIS_UI_ROOT`, else beside phis-server. */
-export function resolvePhiUiCheckoutRoot(serverRoot: string) {
-  return process.env.PHIS_UI_ROOT?.trim() || path.resolve(serverRoot, "..", "phis-ui");
-}
-
-/** Replaced by `scripts/build-cli.mjs` with the set it recorded; not defined when phis runs from source. */
-declare const __PHIS_SITE_VERSIONS_AT_BUILD__: unknown;
-
-/**
- * The fallback set: the one recorded in the bundle, or -- run from source -- the phis-ui checkout beside
- * this tree, read now. Null when there is neither.
- */
-export async function readPhiRecordedSiteVersions(serverVersion: string): Promise<PhiSiteVersionSet | null> {
-  if (typeof __PHIS_SITE_VERSIONS_AT_BUILD__ !== "undefined") return readPhiSiteVersionSet(__PHIS_SITE_VERSIONS_AT_BUILD__);
-  const serverRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-  try {
-    return await readPhiUiCheckoutVersions(resolvePhiUiCheckoutRoot(serverRoot), serverVersion);
-  } catch {
-    return null;
-  }
-}
-
 async function nearestExistingDirectory(directory: string) {
   let current = path.resolve(directory);
   while (true) {
@@ -397,10 +290,8 @@ export async function resolvePhiSiteScaffoldVersions(input: {
   siteRoot: string;
   mode: "init" | "reconcile";
   registry?: PhiPackageRegistry;
-  fallback?: PhiSiteVersionSet | null;
 }) {
   const registry = input.registry ?? createPhiNpmViewRegistry({ cwd: await nearestExistingDirectory(input.siteRoot) });
-  const fallback = input.fallback === undefined ? await readPhiRecordedSiteVersions(input.serverVersion) : input.fallback;
   const uiVersion = input.mode === "reconcile" ? await readPhiSiteUiPin(input.siteRoot) : null;
-  return resolvePhiSiteVersions({ serverVersion: input.serverVersion, registry, fallback, uiVersion });
+  return resolvePhiSiteVersions({ serverVersion: input.serverVersion, registry, uiVersion });
 }
