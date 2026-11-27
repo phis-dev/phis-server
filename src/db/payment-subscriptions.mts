@@ -1,24 +1,37 @@
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
-import type { PhisPaymentSubscriptionPeriod } from "@phis/contracts/payments";
+import type { PhisPaymentChangedEventFacts, PhisPaymentSubscriptionChange, PhisPaymentSubscriptionPeriod } from "@phis/contracts/payments";
 import { PHIS_PAYMENT_LEASE_SECONDS } from "../lib/constants/payments.ts";
 import { announceSubscriptionEntitlements } from "./entitlements.mts";
-import type { PhisPaymentScope, PhisStoredPaymentSubscription } from "../lib/payments/types.ts";
+import type { PhisPaymentScope, PhisStoredPaymentSubscription, PhisStoredPaymentSubscriptionChange } from "../lib/payments/types.ts";
 
 type Db = Pick<PoolClient, "query">;
 type SubscriptionRow = {
   site_id: number; consumer_addon_id: string; record: PhisStoredPaymentSubscription["record"]; request: Record<string, unknown>;
-  anchor_at: Date | null; lease_token: string | null;
+  anchor_at: Date | null; term_first_index: number; lease_token: string | null;
 };
 function fromRow(row: SubscriptionRow): PhisStoredPaymentSubscription {
   return { siteId: row.site_id, consumerAddonId: row.consumer_addon_id, record: row.record, request: row.request,
-    anchorAt: row.anchor_at?.toISOString() ?? null, leaseToken: row.lease_token };
+    anchorAt: row.anchor_at?.toISOString() ?? null, termFirstIndex: row.term_first_index, leaseToken: row.lease_token };
 }
+
+/** The moment of a requested period a `payment.changed` of the subscription is about. */
+export type PhisPaymentSubscriptionMoment = Extract<PhisPaymentChangedEventFacts["subject"], { kind: "subscription" }>["moment"];
+
+/** Bits of `payment_subscription_periods.moments`: which moments of a requested period were said, each once. */
+export const PHIS_PAYMENT_PERIOD_MOMENT_FLAG = {
+  requested: 1 << 0,
+  reminder: 1 << 1,
+  due: 1 << 2,
+  "grace-ending": 1 << 3,
+} as const satisfies Record<NonNullable<PhisPaymentSubscriptionMoment>, number>;
 
 export type PhisStoredPaymentSubscriptionPeriod = {
   record: PhisPaymentSubscriptionPeriod;
   /** How many charges the schedule has made for this period; a customer's own payment is not one. */
   attempts: number;
+  /** `PHIS_PAYMENT_PERIOD_MOMENT_FLAG`: the moments already said. */
+  moments: number;
 };
 
 /** Also serializes a first create, before there is a row to lock. */
@@ -60,21 +73,25 @@ export async function writePhisPaymentSubscription(
   periodIndex: number | null,
   /** The Add-ons that listen for `entitlement.changed`, read only when an entry follows this subscription. */
   entitlementListeners: () => readonly string[] = () => [],
+  /** The change and the moment of a requested period this fact is about, where it is about one. */
+  fact: { changeId?: string | null; moment?: PhisPaymentSubscriptionMoment } = {},
 ) {
   const before = (await db.query<{ record: PhisStoredPaymentSubscription["record"] }>(
     `SELECT record FROM phis.payment_subscriptions WHERE id = $1`, [subscription.record.id])).rows[0]?.record;
-  await db.query(`UPDATE phis.payment_subscriptions SET record = $2::jsonb, anchor_at = $3, next_charge_at = $4, updated_at = NOW() WHERE id = $1`,
-    [subscription.record.id, JSON.stringify(subscription.record), subscription.anchorAt, subscription.record.nextChargeAt]);
+  await db.query(`UPDATE phis.payment_subscriptions SET record = $2::jsonb, anchor_at = $3, term_first_index = $4, next_charge_at = $5, updated_at = NOW() WHERE id = $1`,
+    [subscription.record.id, JSON.stringify(subscription.record), subscription.anchorAt, subscription.termFirstIndex, subscription.record.nextChargeAt]);
   await db.query(`INSERT INTO phis.addon_event_outbox (site_id, addon_id, event, subject_kind, subscription_id, payload)
     VALUES ($1, $2, 'payment.changed', 'subscription', $3, $4::jsonb)`,
     [subscription.siteId, subscription.consumerAddonId, subscription.record.id, JSON.stringify({ subscriptionId: subscription.record.id,
-      reference: subscription.record.reference, version: subscription.record.version, periodIndex })]);
+      reference: subscription.record.reference, version: subscription.record.version, periodIndex,
+      changeId: fact.changeId ?? null, moment: fact.moment ?? null })]);
   /*
    * What an entitlement entry that follows the subscription answers depends on its latest paid period and
    * on whether it ended. When either moved, the entries owe their event; nothing of payments changes.
    */
   const ended = (record: PhisStoredPaymentSubscription["record"] | undefined) => record?.status === "canceled" || (record?.endedAt ?? null) !== null;
-  if (before?.period?.endsAt !== subscription.record.period?.endsAt || ended(before) !== ended(subscription.record)) {
+  if (before?.period?.endsAt !== subscription.record.period?.endsAt || ended(before) !== ended(subscription.record)
+    || before?.graceDays !== subscription.record.graceDays) {
     await announceSubscriptionEntitlements(db, { siteId: subscription.siteId, subscriptionId: subscription.record.id, listeners: entitlementListeners });
   }
 }
@@ -103,9 +120,9 @@ export async function ensurePhisPaymentSubscriptionPeriod(db: Db, period: PhisPa
 }
 
 export async function readPhisPaymentSubscriptionPeriod(db: Db, subscriptionId: string, index: number, lock = false): Promise<PhisStoredPaymentSubscriptionPeriod | null> {
-  const { rows } = await db.query<{ record: PhisPaymentSubscriptionPeriod; attempts: number }>(`SELECT record, attempts FROM phis.payment_subscription_periods
+  const { rows } = await db.query<{ record: PhisPaymentSubscriptionPeriod; attempts: number; moments: number }>(`SELECT record, attempts, moments FROM phis.payment_subscription_periods
     WHERE subscription_id::text = $1 AND period_index = $2 ${lock ? "FOR UPDATE" : ""}`, [subscriptionId, index]);
-  return rows[0] ? { record: rows[0].record, attempts: rows[0].attempts } : null;
+  return rows[0] ? { record: rows[0].record, attempts: rows[0].attempts, moments: rows[0].moments } : null;
 }
 
 export async function listPhisPaymentSubscriptionPeriods(db: Db, subscriptionId: string): Promise<PhisPaymentSubscriptionPeriod[]> {
@@ -114,8 +131,8 @@ export async function listPhisPaymentSubscriptionPeriods(db: Db, subscriptionId:
 }
 
 export async function writePhisPaymentSubscriptionPeriod(db: Db, period: PhisStoredPaymentSubscriptionPeriod) {
-  await db.query("UPDATE phis.payment_subscription_periods SET record = $3::jsonb, attempts = $4 WHERE subscription_id = $1 AND period_index = $2",
-    [period.record.subscriptionId, period.record.index, JSON.stringify(period.record), period.attempts]);
+  await db.query("UPDATE phis.payment_subscription_periods SET record = $3::jsonb, attempts = $4, moments = $5 WHERE subscription_id = $1 AND period_index = $2",
+    [period.record.subscriptionId, period.record.index, JSON.stringify(period.record), period.attempts, period.moments]);
 }
 
 /**
@@ -146,4 +163,48 @@ export async function releasePhisPaymentSubscription(db: Db, id: string, leaseTo
 export async function postponePhisPaymentSubscription(db: Db, id: string, until: Date) {
   await db.query(`UPDATE phis.payment_subscriptions SET next_charge_at = $2, record = jsonb_set(record, '{nextChargeAt}', to_jsonb($3::text))
     WHERE id = $1 AND next_charge_at IS NOT NULL AND next_charge_at < $2`, [id, until, until.toISOString()]);
+}
+
+type ChangeRow = { site_id: number; consumer_addon_id: string; record: PhisPaymentSubscriptionChange; request: Record<string, unknown> };
+const changeFromRow = (row: ChangeRow): PhisStoredPaymentSubscriptionChange =>
+  ({ siteId: row.site_id, consumerAddonId: row.consumer_addon_id, record: row.record, request: row.request });
+
+/** Also serializes a first change request, before there is a row to lock. */
+export async function findPhisPaymentSubscriptionChangeIdempotency(db: Db, scope: PhisPaymentScope, key: string): Promise<PhisStoredPaymentSubscriptionChange | null> {
+  await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [JSON.stringify(["payment-subscription-change", scope.siteId, scope.consumerAddonId, key])]);
+  const { rows } = await db.query<ChangeRow>(`SELECT * FROM phis.payment_subscription_changes
+    WHERE site_id = $1 AND consumer_addon_id = $2 AND idempotency_key = $3`, [scope.siteId, scope.consumerAddonId, key]);
+  return rows[0] ? changeFromRow(rows[0]) : null;
+}
+
+/** False where the subscription already has a change by this reference. */
+export async function insertPhisPaymentSubscriptionChange(db: Db, change: PhisStoredPaymentSubscriptionChange, idempotencyKey: string): Promise<boolean> {
+  const { rowCount } = await db.query(`INSERT INTO phis.payment_subscription_changes (id, site_id, consumer_addon_id, subscription_id, reference, idempotency_key, payment_id, request, record)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb) ON CONFLICT (subscription_id, reference) DO NOTHING`,
+    [change.record.id, change.siteId, change.consumerAddonId, change.record.subscriptionId, change.record.reference, idempotencyKey,
+      change.record.paymentId, JSON.stringify(change.request), JSON.stringify(change.record)]);
+  return (rowCount ?? 0) > 0;
+}
+
+export async function writePhisPaymentSubscriptionChange(db: Db, change: PhisStoredPaymentSubscriptionChange) {
+  await db.query("UPDATE phis.payment_subscription_changes SET record = $2::jsonb, payment_id = $3, updated_at = NOW() WHERE id = $1",
+    [change.record.id, JSON.stringify(change.record), change.record.paymentId]);
+}
+
+export async function readPhisPaymentSubscriptionChange(db: Db, subscriptionId: string, changeId: string, lock = false): Promise<PhisStoredPaymentSubscriptionChange | null> {
+  const { rows } = await db.query<ChangeRow>(`SELECT * FROM phis.payment_subscription_changes WHERE subscription_id::text = $1 AND id::text = $2
+    ${lock ? "FOR UPDATE" : ""}`, [subscriptionId, changeId]);
+  return rows[0] ? changeFromRow(rows[0]) : null;
+}
+
+/** The change a payment of `due` belongs to; `null` for every other payment. */
+export async function findPhisPaymentSubscriptionChangeByPayment(db: Db, paymentId: string, lock = false): Promise<PhisStoredPaymentSubscriptionChange | null> {
+  const { rows } = await db.query<ChangeRow>(`SELECT * FROM phis.payment_subscription_changes WHERE payment_id = $1 ${lock ? "FOR UPDATE" : ""}`, [paymentId]);
+  return rows[0] ? changeFromRow(rows[0]) : null;
+}
+
+/** Newest first; a subscription changes seldom, so the bound is generous. */
+export async function listPhisPaymentSubscriptionChanges(db: Db, subscriptionId: string): Promise<PhisPaymentSubscriptionChange[]> {
+  return (await db.query<{ record: PhisPaymentSubscriptionChange }>(`SELECT record FROM phis.payment_subscription_changes
+    WHERE subscription_id::text = $1 ORDER BY created_at DESC, id DESC LIMIT 500`, [subscriptionId])).rows.map(row => row.record);
 }

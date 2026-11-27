@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { Pool } from "pg";
 
-import type { PhisProductId } from "@phis/contracts/products";
+import { PhisProductFlag, type PhisProductId } from "@phis/contracts/products";
+import { PhisEntitlementStateFlag } from "@phis/contracts/entitlements";
 
 import {
   closePhiTestPool,
@@ -56,7 +57,7 @@ describe.skipIf(!configured)("entitlements through bundles", () => {
     const key = `p${seq}`;
     await registerProduct(pool, {
       siteId: site.id, supplier, listeners: [],
-      draft: normalizePhisProductDraft({ key, type: "licence", title: key, summary: "", counted: input.counted === true, parts: input.parts ?? [] }),
+      draft: normalizePhisProductDraft({ key, type: "licence", title: key, summary: "", flags: input.counted === true ? PhisProductFlag.Counted : 0, parts: input.parts ?? [] }),
     });
     await setProductState(pool, { siteId: site.id, supplier, key, state: "active", listeners: [] });
     return `${supplier}:${key}` as PhisProductId;
@@ -109,12 +110,12 @@ describe.skipIf(!configured)("entitlements through bundles", () => {
     const someone = await person();
     await someone.grant(bundle);
 
-    expect(await someone.state(part)).toEqual({ product: part, entitled: true, quantity: null, until: null, via: [bundle] });
-    expect(await someone.state(bundle)).toEqual({ product: bundle, entitled: true, quantity: null, until: null, via: [bundle] });
+    expect(await someone.state(part)).toEqual({ product: part, flags: PhisEntitlementStateFlag.Entitled, quantity: null, until: null, via: [bundle] });
+    expect(await someone.state(bundle)).toEqual({ product: bundle, flags: PhisEntitlementStateFlag.Entitled, quantity: null, until: null, via: [bundle] });
     // What the bundle does not contain it does not give.
-    expect(await someone.state(other)).toEqual({ product: other, entitled: false, quantity: null, until: null, via: [] });
+    expect(await someone.state(other)).toEqual({ product: other, flags: 0, quantity: null, until: null, via: [] });
     // Nobody else holds it.
-    expect((await (await person()).state(part)).entitled).toBe(false);
+    expect((await (await person()).state(part)).flags).toBe(0);
   });
 
   it("names the product first and then every bundle it is held through", async () => {
@@ -134,8 +135,8 @@ describe.skipIf(!configured)("entitlements through bundles", () => {
     const outer = await product(BUNDLES, { parts: [inner] });
     const someone = await person();
     await someone.grant(outer);
-    expect(await someone.state(part)).toMatchObject({ entitled: true, via: [outer] });
-    expect(await someone.state(inner)).toMatchObject({ entitled: true, via: [outer] });
+    expect(await someone.state(part)).toMatchObject({ flags: PhisEntitlementStateFlag.Entitled, via: [outer] });
+    expect(await someone.state(inner)).toMatchObject({ flags: PhisEntitlementStateFlag.Entitled, via: [outer] });
   });
 
   it("passes nothing on through a locked product: a locked part, a locked bundle, a locked bundle inside another", async () => {
@@ -143,14 +144,14 @@ describe.skipIf(!configured)("entitlements through bundles", () => {
     const bundle = await product(BUNDLES, { parts: [part] });
     const someone = await person();
     await someone.grant(bundle);
-    expect((await someone.state(part)).entitled).toBe(true);
+    expect((await someone.state(part)).flags).toBe(PhisEntitlementStateFlag.Entitled);
 
     // A locked part is held through no bundle; the bundle itself still is.
     await moveProductsAsOperator(pool, { siteId: site.id, to: "locked", productId: part, listeners: [] });
-    expect(await someone.state(part)).toEqual({ product: part, entitled: false, quantity: null, until: null, via: [] });
-    expect((await someone.state(bundle)).entitled).toBe(true);
+    expect(await someone.state(part)).toEqual({ product: part, flags: 0, quantity: null, until: null, via: [] });
+    expect((await someone.state(bundle)).flags).toBe(PhisEntitlementStateFlag.Entitled);
     await moveProductsAsOperator(pool, { siteId: site.id, to: "unlocked", productId: part, listeners: [] });
-    expect((await someone.state(part)).entitled).toBe(true);
+    expect((await someone.state(part)).flags).toBe(PhisEntitlementStateFlag.Entitled);
 
     // A locked bundle gives none of its parts, also when it is held inside another bundle.
     const nestedPart = await product(PARTS);
@@ -159,9 +160,9 @@ describe.skipIf(!configured)("entitlements through bundles", () => {
     await someone.grant(outer);
     await moveProductsAsOperator(pool, { siteId: site.id, to: "locked", productId: bundle, listeners: [] });
     await moveProductsAsOperator(pool, { siteId: site.id, to: "locked", productId: inner, listeners: [] });
-    expect((await someone.state(part)).entitled).toBe(false);
-    expect((await someone.state(nestedPart)).entitled).toBe(false);
-    expect((await someone.state(outer)).entitled).toBe(true);
+    expect((await someone.state(part)).flags).toBe(0);
+    expect((await someone.state(nestedPart)).flags).toBe(0);
+    expect((await someone.state(outer)).flags).toBe(PhisEntitlementStateFlag.Entitled);
   });
 
   it("answers several products in one read as each one's own read answers it, in the order asked", async () => {
@@ -183,14 +184,14 @@ describe.skipIf(!configured)("entitlements through bundles", () => {
     const many = await readEntitlementStates(pool, { siteId: site.id, subjectId: someone.subjectId, products: asked });
     expect(many).toEqual(await Promise.all(asked.map((id) => someone.state(id))));
     expect(many.map((answer) => answer.product)).toEqual(asked);
-    expect(many[0]).toMatchObject({ entitled: true, quantity: 5 });
-    expect(many[1]).toMatchObject({ entitled: true, via: [part, outer] });
-    expect(many[2]!.entitled).toBe(false);
-    expect(many[4]!.entitled).toBe(false);
+    expect(many[0]).toMatchObject({ flags: PhisEntitlementStateFlag.Entitled, quantity: 5 });
+    expect(many[1]).toMatchObject({ flags: PhisEntitlementStateFlag.Entitled, via: [part, outer] });
+    expect(many[2]!.flags).toBe(0);
+    expect(many[4]!.flags).toBe(0);
 
     // Nobody to ask for, and nothing asked: no read, every answer no.
     expect(await readEntitlementStates(pool, { siteId: site.id, subjectId: null, products: [part] }))
-      .toEqual([{ product: part, entitled: false, quantity: null, until: null, via: [] }]);
+      .toEqual([{ product: part, flags: 0, quantity: null, until: null, via: [] }]);
     expect(await readEntitlementStates(pool, { siteId: site.id, subjectId: someone.subjectId, products: [] })).toEqual([]);
   });
 
@@ -220,10 +221,10 @@ describe.skipIf(!configured)("entitlements through bundles", () => {
     await someone.grant(inner, { endsAt: later });
     // An ended entry on a bundle neither entitles nor moves the end.
     await someone.grant(outer, { startsAt: hours(-3), endsAt: hours(-1) });
-    expect(await someone.state(part)).toMatchObject({ entitled: true, until: new Date(later).toISOString(), via: [part, inner] });
+    expect(await someone.state(part)).toMatchObject({ flags: PhisEntitlementStateFlag.Entitled, until: new Date(later).toISOString(), via: [part, inner] });
 
     await someone.grant(outer);
-    expect(await someone.state(part)).toMatchObject({ entitled: true, until: null, via: [part, inner, outer] });
+    expect(await someone.state(part)).toMatchObject({ flags: PhisEntitlementStateFlag.Entitled, until: null, via: [part, inner, outer] });
   });
 
   it("counts only the product's own entries: held through a bundle alone, a counted product has 0", async () => {
@@ -231,10 +232,10 @@ describe.skipIf(!configured)("entitlements through bundles", () => {
     const bundle = await product(BUNDLES, { parts: [seats] });
     const someone = await person();
     await someone.grant(bundle);
-    expect(await someone.state(seats)).toEqual({ product: seats, entitled: true, quantity: 0, until: null, via: [bundle] });
+    expect(await someone.state(seats)).toEqual({ product: seats, flags: PhisEntitlementStateFlag.Entitled, quantity: 0, until: null, via: [bundle] });
     await someone.grant(seats, { counted: true, quantity: 3 });
     await someone.grant(seats, { counted: true, quantity: 2 });
-    expect(await someone.state(seats)).toMatchObject({ entitled: true, quantity: 5, via: [seats, bundle] });
+    expect(await someone.state(seats)).toMatchObject({ flags: PhisEntitlementStateFlag.Entitled, quantity: 5, via: [seats, bundle] });
     // The bundle itself is not counted.
     expect((await someone.state(bundle)).quantity).toBeNull();
   });
@@ -258,7 +259,7 @@ describe.skipIf(!configured)("entitlements through bundles", () => {
     expect(await listEntitlements(pool, { siteId: site.id, subjectId: someone.subjectId, product: part, resolveBundles: false })).toEqual(plain);
 
     const resolved = await listEntitlements(pool, { siteId: site.id, subjectId: someone.subjectId, product: part, resolveBundles: true });
-    expect(resolved.map((entry) => [entry.id, entry.product, entry.valid])).toEqual([
+    expect(resolved.map((entry) => [entry.id, entry.product, entry.standing === "valid"])).toEqual([
       [own.id, part, true], [viaInner.id, inner, true], [viaOuter.id, outer, false],
     ]);
     // Without a product there is nothing to resolve: every entry of the subject is listed already.
@@ -313,7 +314,7 @@ describe.skipIf(!configured)("entitlements through bundles", () => {
     await clearOutbox();
     await updateEntitlement(pool, { siteId: site.id, source: SHOP, product: outer, reference: entry.reference, revoke: true, listeners: [LISTENER] });
     expect((await products()).map(([, id]) => id).sort()).toEqual([outer, inner, part].sort());
-    expect(await someone.state(part)).toMatchObject({ entitled: false, via: [] });
+    expect(await someone.state(part)).toMatchObject({ flags: 0, via: [] });
 
     // A product that is nobody's bundle owes its own event only.
     await clearOutbox();

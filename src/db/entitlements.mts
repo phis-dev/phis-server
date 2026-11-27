@@ -4,7 +4,10 @@ import type { Pool, PoolClient } from "pg";
 
 import {
   PhisEntitlementFlag,
+  PhisEntitlementStateFlag,
   type PhisEntitlement,
+  type PhisEntitlementEntryName,
+  type PhisEntitlementStanding,
   type PhisEntitlementState,
   type PhisEntitlementSubject,
 } from "@phis/contracts/entitlements";
@@ -40,19 +43,20 @@ const BLOCKING_FLAGS = PhisEntitlementFlag.Revoked | PhisEntitlementFlag.Suspend
 /**
  * What an entry bound to a subscription follows, read from the subscription's record on every use.
  * `period` is the latest paid period, null until the first payment: such an entry counts for nothing.
- * It counts until that period's end, and -- while the subscription has not ended -- for the Site's grace
- * days after it (`BOUND_COUNTS_UNTIL_SQL`). The end the entry shows is the period's, without the grace.
+ * It counts until that period's end, and -- while the subscription has not ended -- for the subscription's
+ * own `graceDays` after it (`BOUND_COUNTS_UNTIL_SQL`), read from the same record, so an applied change that
+ * moves the grace needs no write here. The end the entry shows is the period's, without the grace.
  */
 const PAID_END_SQL = `(SELECT (sx.record->'period'->>'endsAt')::timestamptz FROM phis.payment_subscriptions sx WHERE sx.id = e.subscription_id)`;
 const BOUND_COUNTS_UNTIL_SQL = `(SELECT (sx.record->'period'->>'endsAt')::timestamptz
   + CASE WHEN sx.record->>'status' = 'canceled' OR sx.record->>'endedAt' IS NOT NULL THEN 0
-         ELSE (SELECT g.entitlement_grace_days FROM phis.sites g WHERE g.id = e.site_id) END * INTERVAL '1 day'
+         ELSE (sx.record->>'graceDays')::int END * INTERVAL '1 day'
   FROM phis.payment_subscriptions sx WHERE sx.id = e.subscription_id)`;
 const SHOWN_END_SQL = `COALESCE(e.ends_at, ${PAID_END_SQL})`;
 /** An entry that never stops counting: one without a subscription and without a written end. */
 const OPEN_ENDED_SQL = `(e.subscription_id IS NULL AND e.ends_at IS NULL)`;
 /**
- * The instant an entry stops counting, the one rule behind `valid`, the state's `until` and the expiry
+ * The instant an entry stops counting, the one rule behind `standing`, the state's `until` and the expiry
  * job: an unbound entry's written end, a bound one's `BOUND_COUNTS_UNTIL_SQL`. Null for an open-ended
  * entry, and for a bound one without a paid period, which counts for nothing.
  */
@@ -62,8 +66,21 @@ const VALID_SQL = `((e.flags & ${BLOCKING_FLAGS}) = 0 AND e.starts_at <= NOW()
   AND (${OPEN_ENDED_SQL} OR COALESCE(${COUNTS_UNTIL_SQL} > NOW(), FALSE))
   AND EXISTS (SELECT 1 FROM phis.products vp WHERE ${ENTRY_PRODUCT_JOIN_SQL("e", "vp")} AND vp.state <> 'locked'))`;
 
+/**
+ * `PhisEntitlement.standing`: `valid` exactly where `VALID_SQL` holds, otherwise the first reason that
+ * applies in the contract's order -- the flags, the product, the start, the end. A product that no longer
+ * exists counts as locked: it passes nothing on, as a locked one does.
+ */
+const STANDING_SQL = `(CASE
+  WHEN (e.flags & ${PhisEntitlementFlag.Revoked}) <> 0 THEN 'revoked'
+  WHEN (e.flags & ${PhisEntitlementFlag.Suspended}) <> 0 THEN 'suspended'
+  WHEN NOT EXISTS (SELECT 1 FROM phis.products vp WHERE ${ENTRY_PRODUCT_JOIN_SQL("e", "vp")} AND vp.state <> 'locked') THEN 'product-locked'
+  WHEN e.starts_at > NOW() THEN 'not-started'
+  WHEN NOT (${OPEN_ENDED_SQL} OR COALESCE(${COUNTS_UNTIL_SQL} > NOW(), FALSE)) THEN 'ended'
+  ELSE 'valid' END)`;
+
 const ENTRY_COLUMNS = `e.id, e.product, s.reference AS subject, e.source, e.reference, e.starts_at, ${SHOWN_END_SQL} AS ends_at, e.subscription_id::text AS subscription_id,
-  e.quantity, e.flags, ${VALID_SQL} AS valid, e.created_at, e.updated_at`;
+  e.quantity, e.flags, ${STANDING_SQL} AS standing, e.created_at, e.updated_at`;
 
 /**
  * The products whose entries speak for each product in `products` (a `text[]`) of the Site in `site`: the
@@ -100,7 +117,7 @@ type EntryRow = {
   subscription_id: string | null;
   quantity: number | null;
   flags: number;
-  valid: boolean;
+  standing: PhisEntitlementStanding;
   created_at: Date;
   updated_at: Date;
 };
@@ -117,7 +134,7 @@ function mapEntry(row: EntryRow): PhisEntitlement {
     subscriptionId: row.subscription_id,
     quantity: row.quantity,
     flags: row.flags,
-    valid: row.valid,
+    standing: row.standing,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
@@ -172,7 +189,7 @@ export async function findEntitlementSubject(
 }
 
 /**
- * The entries of a Site, narrowed to a subject, a product, or both; every source's, valid or not.
+ * The entries of a Site, narrowed to a subject, a product, or both; every source's, whatever their standing.
  * `subjectReferences` narrows to several subjects at once by their references, in the same one
  * statement -- a reference that is nobody on this Site matches no entry of it.
  *
@@ -238,7 +255,7 @@ export async function readEntitlementStates(pool: Pool, input: {
   subjectId: number | null;
   products: readonly PhisProductId[];
 }): Promise<PhisEntitlementState[]> {
-  const nobody = (product: PhisProductId): PhisEntitlementState => ({ product, entitled: false, quantity: null, until: null, via: [] });
+  const nobody = (product: PhisProductId): PhisEntitlementState => ({ product, flags: 0, quantity: null, until: null, via: [] });
   if (input.subjectId === null || input.products.length === 0) {
     return input.products.map(nobody);
   }
@@ -273,7 +290,7 @@ export async function readEntitlementStates(pool: Pool, input: {
     const bundles = via.filter((id) => id !== product).sort();
     return {
       product,
-      entitled,
+      flags: PhisEntitlementStateFlag.Entitled,
       quantity: row.counted ? Number(row.quantity ?? 0) : null,
       until: !row.open_ended && row.until ? row.until.toISOString() : null,
       via: (own ? [product, ...bundles] : bundles) as PhisProductId[],
@@ -445,9 +462,12 @@ export async function grantEntitlement(pool: Pool, input: {
 /**
  * Changes a source's own entry, found by the source's reference; null where it has none by that name.
  *
- * `undefined` leaves a column as it is, which is why the three are passed with a "stated" flag each: an
- * end of `null` is a statement -- without an end -- and not the absence of one. A revoked entry is over
- * and is not changed. An ending that moved is owed its event again.
+ * `undefined` leaves a column as it is, which is why the end and the quantity are passed with a "stated"
+ * flag each: an end of `null` is a statement -- without an end -- and not the absence of one. `setFlags`
+ * and `clearFlags` move `Suspended` only (the caller has checked it); `revoke` sets `Revoked`. `unbind`
+ * takes the entry off its subscription: from then on it counts without an end, or until the end stated in
+ * the same call, and an entry that was not bound is answered unchanged. A revoked entry is over and is not
+ * changed. An ending that moved is owed its event again.
  */
 export async function updateEntitlement(pool: Pool, input: {
   siteId: number;
@@ -456,48 +476,85 @@ export async function updateEntitlement(pool: Pool, input: {
   reference: string;
   endsAt?: string | null;
   quantity?: number | null;
-  suspended?: boolean;
+  setFlags?: number;
+  clearFlags?: number;
+  unbind?: boolean;
   revoke?: boolean;
   listeners: readonly string[];
 }): Promise<PhisEntitlement | null> {
   return withPoolTransaction(pool, async (client) => {
-    if (input.endsAt !== undefined) {
-      const { rowCount } = await client.query(
-        `SELECT 1 FROM phis.entitlements WHERE site_id = $1 AND source = $2 AND product = $3 AND reference = $4 AND subscription_id IS NOT NULL`,
-        [input.siteId, input.source, input.product, input.reference],
-      );
-      if ((rowCount ?? 0) > 0) throw new Error("An entry bound to a subscription has no written end; its subscription decides.");
+    const { rows: found } = await client.query<{ id: number; bound: boolean }>(
+      `SELECT id, subscription_id IS NOT NULL AS bound FROM phis.entitlements
+       WHERE site_id = $1 AND source = $2 AND product = $3 AND reference = $4 FOR UPDATE`,
+      [input.siteId, input.source, input.product, input.reference],
+    );
+    const entry = found[0];
+    if (!entry) return null;
+    // An entry that stays bound has no written end; its subscription decides. Unbound in the same call, it may.
+    if (input.endsAt !== undefined && entry.bound && input.unbind !== true) {
+      throw new Error("An entry bound to a subscription has no written end; its subscription decides.");
+    }
+    const unbind = input.unbind === true && entry.bound;
+    const setFlags = input.revoke === true ? PhisEntitlementFlag.Revoked : input.setFlags ?? 0;
+    const clearFlags = input.revoke === true ? 0 : input.clearFlags ?? 0;
+    // Asked only to unbind an entry that follows no subscription: answered as it is, without an event.
+    if (input.endsAt === undefined && input.quantity === undefined && setFlags === 0 && clearFlags === 0 && !unbind && input.revoke !== true) {
+      return readEntry(client, entry.id);
     }
     const updated = await client.query<{ id: number }>(
       `UPDATE phis.entitlements e
-       SET ends_at = CASE WHEN $5::boolean THEN $6::timestamptz ELSE e.ends_at END,
-           ended_event_at = CASE WHEN $5::boolean THEN NULL ELSE e.ended_event_at END,
-           quantity = CASE WHEN $7::boolean THEN $8::int ELSE e.quantity END,
-           flags = CASE
-             WHEN $11::boolean THEN e.flags | ${PhisEntitlementFlag.Revoked}
-             WHEN $9::boolean AND $10::boolean THEN e.flags | ${PhisEntitlementFlag.Suspended}
-             WHEN $9::boolean THEN e.flags & ~${PhisEntitlementFlag.Suspended}
-             ELSE e.flags
-           END,
+       SET ends_at = CASE WHEN $2::boolean THEN $3::timestamptz WHEN $8::boolean THEN NULL ELSE e.ends_at END,
+           ended_event_at = CASE WHEN $2::boolean OR $8::boolean THEN NULL ELSE e.ended_event_at END,
+           subscription_id = CASE WHEN $8::boolean THEN NULL ELSE e.subscription_id END,
+           quantity = CASE WHEN $4::boolean THEN $5::int ELSE e.quantity END,
+           flags = (e.flags | $6::int) & ~$7::int,
            updated_at = NOW()
-       WHERE e.site_id = $1 AND e.source = $2 AND e.product = $3 AND e.reference = $4
-         AND ($11::boolean OR (e.flags & ${PhisEntitlementFlag.Revoked}) = 0)
+       WHERE e.id = $1
+         AND ($9::boolean OR (e.flags & ${PhisEntitlementFlag.Revoked}) = 0)
        RETURNING e.id`,
       [
-        input.siteId, input.source, input.product, input.reference,
+        entry.id,
         input.endsAt !== undefined, input.endsAt ?? null,
         input.quantity !== undefined, input.quantity ?? null,
-        input.suspended !== undefined, input.suspended === true,
-        input.revoke === true,
+        setFlags, clearFlags, unbind, input.revoke === true,
       ],
     );
     if (!updated.rows[0]) {
       return null;
     }
-    const entry = await readEntry(client, updated.rows[0].id);
-    await enqueueEntitlementChanged(client, { siteId: input.siteId, recipients: input.listeners, subject: entry.subject, products: [entry.product] });
-    return entry;
+    const written = await readEntry(client, updated.rows[0].id);
+    await enqueueEntitlementChanged(client, { siteId: input.siteId, recipients: input.listeners, subject: written.subject, products: [written.product] });
+    return written;
   });
+}
+
+/**
+ * Named entries in one read (`entitlements:v1` `listNamed`): one answer per name, in the order asked, the
+ * entry of that source, reference and product, or null where there is none or it is not the named
+ * subject's -- `fallbackSubject` (the acting person's) where a name gives none, and null for that name where
+ * there is nobody either. The caller bounds the list.
+ */
+export async function listNamedEntitlements(pool: Pool, input: {
+  siteId: number;
+  entries: readonly PhisEntitlementEntryName[];
+  fallbackSubject: PhisEntitlementSubject | null;
+}): Promise<(PhisEntitlement | null)[]> {
+  if (input.entries.length === 0) return [];
+  const { rows } = await pool.query<EntryRow & { position: string }>(
+    `SELECT n.position, ${ENTRY_COLUMNS}
+     FROM unnest($2::text[], $3::text[], $4::text[], $5::text[]) WITH ORDINALITY AS n(source, reference, product, subject, position)
+     JOIN phis.entitlements e ON e.site_id = $1 AND e.source = n.source AND e.reference = n.reference AND e.product = n.product
+     JOIN phis.entitlement_subjects s ON s.id = e.subject_id AND s.reference = n.subject`,
+    [
+      input.siteId,
+      input.entries.map((entry) => entry.source),
+      input.entries.map((entry) => entry.reference),
+      input.entries.map((entry) => entry.product),
+      input.entries.map((entry) => entry.subject ?? input.fallbackSubject),
+    ],
+  );
+  const byPosition = new Map(rows.map((row) => [Number(row.position), mapEntry(row)]));
+  return input.entries.map((_, index) => byPosition.get(index + 1) ?? null);
 }
 
 /** Whether the Site's operator allowed this source to write the products of this supplier. */

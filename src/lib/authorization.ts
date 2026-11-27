@@ -93,6 +93,17 @@ export const PHI_ACCESS_ACCOUNTING = {
 } as const satisfies PhiViewerAccessPolicy;
 
 /**
+ * The Site's billing documents and settlements (`billing:v1`, `payments:v1` `listSettlements`): the Site
+ * roles Admin (through the evaluator) and Accountant, and deliberately not the Site access `accounting`,
+ * which also admits a Maintainer (owner, 2026-11-27).
+ */
+export const PHI_ACCESS_BILLING = {
+  access: "roles",
+  providerId: PHI_CORE_ROLE_PROVIDER_ID,
+  allowedRoleFlags: PhiBaseRole.Accountant,
+} as const satisfies PhiViewerAccessPolicy;
+
+/**
  * Staff who act on a member's behalf: whoever holds `support` or `accounting` above (Maintainer,
  * Supporter, Accountant, and Admin through the evaluator) -- the two Site accesses `entitlements:v1`
  * `subjectForUser` asks before it names a member to an Add-on. Not a Site access of its own: no Add-on

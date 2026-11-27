@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PhisPaymentPricing } from "@phis/contracts/payments";
+import { PhisPaymentFlag, type PhisPaymentPricing } from "@phis/contracts/payments";
 import { PhisPaymentEngine } from "@/lib/payments/engine";
 import { buildPhisPaymentNotificationsCapability } from "@/lib/payments/runtime";
-import { readPhisPaymentProfile, recordPhisPaymentProfileProbe, setPhisPaymentProfileEnabled, writePhisPaymentProfile } from "./payments.mts";
+import { readPhisPaymentProfile, recordPhisPaymentProfileFeatures, setPhisPaymentProfileEnabled, writePhisPaymentProfile } from "./payments.mts";
 import { closePhiTestPool, createPhiTestSite, dropPhiTestSites, requirePhiTestDatabase, type PhiTestSite } from "../../test/pg/harness";
 import { StoringProvider } from "../../test/pg/payment-storing-provider";
 
@@ -33,7 +33,7 @@ describe("stored payment methods and charges without the customer", () => {
         { consumerAddonId: OTHER_CONSUMER, operations: ["read", "create", "refresh"], merchantActions: { capture: policy, cancel: policy, refund: policy } },
       ],
     }, false);
-    await recordPhisPaymentProfileProbe(pool, profile, "acct_stored", "test", "CHF", []);
+    await recordPhisPaymentProfileFeatures(pool, profile, "acct_stored", "test", "CHF", []);
     await setPhisPaymentProfileEnabled(pool, (await readPhisPaymentProfile(pool, site.id, "sandbox"))!, true);
   });
   afterAll(async () => {
@@ -80,8 +80,10 @@ describe("stored payment methods and charges without the customer", () => {
     const recurring = await api.listMethods({ ...selector, usage: "recurring" });
 
     expect(once.map(method => method.methodKey)).toEqual(["card", "wallet", "invoice"]);
-    expect(recurring.map(method => method.methodKey)).toEqual(["card", "wallet"]);
-    expect(recurring[1]!.features.stored).toMatchObject({ perPayer: "single", chargeResult: "immediate", expires: false });
+    // The invoice cannot be stored and still collects a subscription: on request, each period on its checkout.
+    expect(recurring.map(method => method.methodKey)).toEqual(["card", "wallet", "invoice"]);
+    expect(recurring[1]!.features.stored).toMatchObject({ perPayer: "single", chargeResult: "immediate", flags: 0 });
+    expect(recurring[2]!.features.collection).toMatchObject({ automatic: null, paymentRequest: { maxDays: null } });
     expect(once[2]!.features.stored).toBeNull();
     // The Provider is told what is wanted, so it can leave out what it cannot charge for this amount.
     expect(remote.probes).toEqual([undefined, "recurring"]);
@@ -227,12 +229,12 @@ describe("stored payment methods and charges without the customer", () => {
     const input = renewal(methodId);
 
     const lost = await api.chargeStoredMethod(input);
-    expect(lost.payment.reconciliationRequired).toBe(true);
+    expect(lost.payment.flags & PhisPaymentFlag.ReconciliationRequired).toBe(PhisPaymentFlag.ReconciliationRequired);
     expect(lost.operation.state).toBe("indeterminate");
 
     // Asking again recovers what happened; it does not send the charge a second time.
     const recovered = await api.chargeStoredMethod(input);
-    expect(recovered.payment).toMatchObject({ id: lost.payment.id, status: "captured", reconciliationRequired: false });
+    expect(recovered.payment).toMatchObject({ id: lost.payment.id, status: "captured", flags: 0 });
     expect(remote.charges).toHaveLength(1);
   });
 
@@ -364,7 +366,7 @@ describe("stored payment methods and charges without the customer", () => {
     const api = await service();
     // The wallet is stored with a payment and in no other way.
     await expect(api.setupMethod(setupInput({ methodKey: "wallet" }))).rejects.toMatchObject({ code: "unsupported_operation" });
-    await expect(api.setupMethod(setupInput({ methodKey: "invoice" }))).rejects.toMatchObject({ code: "method_unavailable" });
+    await expect(api.setupMethod(setupInput({ methodKey: "invoice" }))).rejects.toMatchObject({ code: "unsupported_operation" });
     const other = await service(OTHER_CONSUMER);
     await expect(other.setupMethod(setupInput())).rejects.toMatchObject({ code: "not_found" });
   });

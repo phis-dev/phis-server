@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import type { PhisPaymentPricing, PhisPaymentProfileDraft, PhisPaymentProviderCommand, PhisPaymentProviderExecution, PhisPaymentProviderObservation, PhisPaymentProviderV1 } from "@phis/contracts/payments";
+import { PhisPaymentAdditionFlag, PhisPaymentFlag, type PhisPaymentPricing, type PhisPaymentProfileDraft, type PhisPaymentProviderCommand, type PhisPaymentProviderExecution,
+  type PhisPaymentProviderObservation, type PhisPaymentProviderV1 } from "@phis/contracts/payments";
+import { TEST_ALL_METHOD_FLAGS, TEST_CURRENCY_FEATURES, testPricingFeatures } from "../../test/payment-features.ts";
 import { PhisPaymentEngine } from "@/lib/payments/engine";
 import { PHIS_PAYMENT_KNOCK_REPEATS } from "@/lib/constants/payments";
 import { logRuntimeEvent } from "@/lib/log";
@@ -9,7 +11,7 @@ import { buildPhisPaymentNotificationsCapability } from "@/lib/payments/runtime"
 import { schedulePhisAddonEventDelivery } from "@/lib/addons/event-trigger.ts";
 import { withPoolTransaction } from "@/lib/db-transaction";
 import { claimPhisPaymentReceipt, findPhisPaymentForNotification, listPhisPaymentRecoveryCandidates, listPhisPaymentRefunds, readPhisPayment, readPhisPaymentProfile,
-  recordPhisPaymentProfileProbe, setPhisPaymentProfileEnabled, writePhisPaymentProfile, claimPhisPayment } from "./payments.mts";
+  recordPhisPaymentProfileFeatures, setPhisPaymentProfileEnabled, writePhisPaymentProfile, claimPhisPayment } from "./payments.mts";
 import { closePhiTestPool, createPhiTestSite, dropPhiTestSites, requirePhiTestDatabase, type PhiTestSite } from "../../test/pg/harness";
 
 const providerBinding = vi.hoisted(() => ({ addonId: "@pgtest/payment-provider", factory: null as null | (() => unknown) }));
@@ -30,9 +32,9 @@ class FakeProvider implements PhisPaymentProviderV1 {
   checkoutExpiry: { minSeconds: number; maxSeconds: number } | null = null;
   lastCreate: Extract<PhisPaymentProviderCommand, { action: "create" }> | null = null;
   async probe() { return { merchantIdentity: "acct_test", mode: "test" as const, methods: [{ methodKey: "card", title: "Test card",
-    features: { captureModes: ["automatic", "manual"] as const, checkoutKinds: ["redirect"] as const, canPartialCapture: true, canCancel: true, canRefund: true, canPartialRefund: true,
-      pricing: { bases: ["final", "net"] as const, tax: ["none", "provider"] as const, maxDiscounts: 1, promotionCodes: "alone" as const, collectsCustomerDetails: true, collectsTaxIds: false, merchantOfRecord: null },
-      checkoutExpiry: this.checkoutExpiry } }] }; }
+    features: { captureModes: ["automatic", "manual"] as const, checkoutKinds: ["redirect"] as const, flags: TEST_ALL_METHOD_FLAGS,
+      pricing: testPricingFeatures({ bases: ["final", "net"], tax: ["none", "provider"], maxDiscounts: 1, promotionCodes: "alone", collectsCustomerDetails: true }),
+      currency: TEST_CURRENCY_FEATURES, checkoutExpiry: this.checkoutExpiry } }] }; }
   async execute(command: PhisPaymentProviderCommand): Promise<PhisPaymentProviderExecution> {
     this.calls[command.action] = (this.calls[command.action] ?? 0) + 1;
     if (command.action === "create") this.lastCreate = structuredClone({ ...command, signal: undefined }) as unknown as typeof this.lastCreate;
@@ -42,7 +44,7 @@ class FakeProvider implements PhisPaymentProviderV1 {
       state = { binding: { reference: `remote-${command.paymentId}`, data: { id: command.paymentId } }, merchantIdentity: "acct_test", mode: "test",
         status: "awaiting_customer", amount: command.amount, authorizedMinor: "0", capturedMinor: "0", authorizationExpiresAt: null,
         // A fixed-total policy knows its total at once; a line-item policy learns it from the customer's location.
-        totals: "lineItems" in command.pricing ? null : { total: command.amount, additions: [], customer: null },
+        totals: "lineItems" in command.pricing ? null : { total: command.amount, additions: [], customer: null, presentment: null },
         checkout: { kind: "redirect", url: "https://provider.example/checkout#provider-fragment", expiresAt: null }, refunds: [] };
       this.states.set(command.paymentId, state);
     }
@@ -99,7 +101,7 @@ describe("durable Payment execution", () => {
           consumerAddonId, operations: ["read", "create", "complete", "refresh", "capture", "cancel", "refund"], merchantActions: { capture: policy, cancel: policy, refund: policy },
         })),
       }, false);
-      await recordPhisPaymentProfileProbe(pool, profile, "acct_test", "test", "CHF", []);
+      await recordPhisPaymentProfileFeatures(pool, profile, "acct_test", "test", "CHF", []);
       await setPhisPaymentProfileEnabled(pool, (await readPhisPaymentProfile(pool, selected.id, "sandbox"))!, true);
     }
   });
@@ -126,7 +128,8 @@ describe("durable Payment execution", () => {
   const netPricing: PhisPaymentPricing = { basis: "net", tax: "provider", promotionCodes: "provider", customer: null,
     lineItems: [{ reference: "sku-1", description: "Widget", quantity: 2, unitMinor: "1000", taxCategory: "general", providerTaxCodes: null }],
     shipping: { minor: "500", taxCategory: "shipping" }, discounts: [{ reference: "promo-spring", label: "Spring sale", minor: "500" }] };
-  const addition = (kind: "tax" | "shipping" | "discount", minor: string, patch = {}) => ({ kind, minor, label: kind, inclusive: kind === "shipping", rate: null, jurisdiction: null, collectedBy: "merchant" as const, code: null, ...patch });
+  const addition = (kind: "tax" | "shipping" | "discount", minor: string, patch = {}) => ({ kind, minor, label: kind,
+    flags: kind === "shipping" ? PhisPaymentAdditionFlag.Inclusive : 0, rate: null, jurisdiction: null, collectedBy: "merchant" as const, code: null, ...patch });
   async function captured() {
     const api = await service(); const result = await api.create(input()); const state = remote.states.get(result.payment.id)!;
     state.status = "captured"; state.capturedMinor = "1990"; state.checkout = null;
@@ -200,8 +203,8 @@ describe("durable Payment execution", () => {
   it("recovers remote acceptance after a timeout without recreating a checkout", async () => {
     const api = await service(); const args = input(); remote.unknownAfter = "create";
     const count = remote.calls.create ?? 0; const result = await api.create(args);
-    expect(result.operation.state).toBe("indeterminate"); expect(result.payment.reconciliationRequired).toBe(true);
-    const retry = await api.create(args); expect(retry.operation.state).toBe("succeeded"); expect(retry.payment.reconciliationRequired).toBe(false);
+    expect(result.operation.state).toBe("indeterminate"); expect(result.payment.flags & PhisPaymentFlag.ReconciliationRequired).toBe(PhisPaymentFlag.ReconciliationRequired);
+    const retry = await api.create(args); expect(retry.operation.state).toBe("succeeded"); expect(retry.payment.flags & PhisPaymentFlag.ReconciliationRequired).toBe(0);
     expect(remote.calls.create).toBe(count + 1);
   });
   it("does not persist or expose a malformed Provider refusal after submission", async () => {
@@ -434,7 +437,7 @@ describe("durable Payment execution", () => {
     const customer = { country: "CH", postalCode: "8000", region: null, addressSource: "billing" as const, taxIds: [] };
     state.totals = { total: { currency: "CHF", minor: "2162" }, customer, additions: [
       addition("tax", "162", { label: "MwSt", rate: "8.1", jurisdiction: "CH" }), addition("shipping", "500"), addition("discount", "500", { code: "promo-spring" }),
-    ] };
+    ], presentment: null };
     await api.refresh(id); expect((await api.get(id))!.totals).toMatchObject({ total: { minor: "2162" }, frozenAt: null, customer });
     state.status = "captured"; state.capturedMinor = "2162"; state.checkout = null;
     await api.refresh(id);
@@ -443,7 +446,14 @@ describe("durable Payment execution", () => {
     state.totals = { ...state.totals, total: { currency: "CHF", minor: "2161" }, additions: [addition("tax", "161"), addition("shipping", "500"), addition("discount", "500", { code: "promo-spring" })] };
     await expect(api.refresh(id)).rejects.toMatchObject({ code: "provider_unavailable" });
     expect((await api.get(id))!.totals!.total.minor).toBe("2162");
-    state.totals = captured.totals && { total: captured.totals.total, additions: captured.totals.additions, customer: captured.totals.customer };
+    // What the customer saw in their own currency may arrive after the total bound: informational, never compared.
+    state.totals = captured.totals && { total: captured.totals.total, additions: captured.totals.additions, customer: captured.totals.customer, presentment: { currency: "EUR", minor: "2290" } };
+    await api.refresh(id);
+    expect((await api.get(id))!.totals).toMatchObject({ total: { minor: "2162" }, presentment: { currency: "EUR", minor: "2290" } });
+    // A presentment in the payment's own currency is no conversion and is refused.
+    state.totals = { ...state.totals!, presentment: { currency: "CHF", minor: "2162" } };
+    await expect(api.refresh(id)).rejects.toMatchObject({ code: "provider_unavailable" });
+    state.totals = { ...state.totals, presentment: null };
     const refund = await api.refund({ paymentId: id, idempotencyKey: randomUUID(), minor: "1081", reason: "Half" });
     state.refunds[0]!.additions = [addition("tax", "81", { label: "MwSt" })];
     await api.refresh(id); expect((await api.getRefund(refund.refund!.id))!.additions).toEqual([addition("tax", "81", { label: "MwSt" })]);
@@ -451,17 +461,17 @@ describe("durable Payment execution", () => {
   it("refuses additions the policy did not allow, missing stated discounts and settled funds without a total", async () => {
     const api = await service();
     const fixed = await api.create(input()); const fixedState = remote.states.get(fixed.payment.id)!;
-    fixedState.totals = { total: { currency: "CHF", minor: "2151" }, additions: [addition("tax", "161")], customer: null };
+    fixedState.totals = { total: { currency: "CHF", minor: "2151" }, additions: [addition("tax", "161")], customer: null, presentment: null };
     await expect(api.refresh(fixed.payment.id)).rejects.toMatchObject({ code: "provider_unavailable" });
     const pricing = { ...netPricing, promotionCodes: "none" as const };
     const result = await api.create(input({ amount: { currency: "CHF", minor: "2000" }, pricing })); const state = remote.states.get(result.payment.id)!;
     const shipping = addition("shipping", "500"); const stated = addition("discount", "500", { code: "promo-spring" });
     for (const totals of [
-      { total: { currency: "CHF", minor: "2000" }, additions: [shipping], customer: null },
-      { total: { currency: "CHF", minor: "1900" }, additions: [shipping, stated, addition("discount", "100", { code: "WELCOME" })], customer: null },
-      { total: { currency: "CHF", minor: "2162" }, additions: [addition("tax", "162", { inclusive: true }), shipping, stated], customer: null },
-      { total: { currency: "CHF", minor: "2162" }, additions: [addition("tax", "162", { collectedBy: "provider" }), shipping, stated], customer: null },
-      { total: { currency: "CHF", minor: "2163" }, additions: [addition("tax", "162"), shipping, stated], customer: null },
+      { total: { currency: "CHF", minor: "2000" }, additions: [shipping], customer: null, presentment: null },
+      { total: { currency: "CHF", minor: "1900" }, additions: [shipping, stated, addition("discount", "100", { code: "WELCOME" })], customer: null, presentment: null },
+      { total: { currency: "CHF", minor: "2162" }, additions: [addition("tax", "162", { flags: PhisPaymentAdditionFlag.Inclusive }), shipping, stated], customer: null, presentment: null },
+      { total: { currency: "CHF", minor: "2162" }, additions: [addition("tax", "162", { collectedBy: "provider" }), shipping, stated], customer: null, presentment: null },
+      { total: { currency: "CHF", minor: "2163" }, additions: [addition("tax", "162"), shipping, stated], customer: null, presentment: null },
     ]) {
       state.totals = totals; await expect(api.refresh(result.payment.id)).rejects.toMatchObject({ code: "provider_unavailable" });
       expect((await api.get(result.payment.id))!.totals).toBeNull();
@@ -495,75 +505,86 @@ describe("durable Payment execution", () => {
       expect(remote.lastCreate).not.toHaveProperty("expiresAt");
     } finally { remote.checkoutExpiry = null; remote.lastCreate = null; }
   });
-  it("records each currency beside the others, reads the reach from the recording and asks again at most once a minute", async () => {
+  it("records each currency per declared policy beside the others, reads the features from the recording and asks again at most once a minute", async () => {
     const pool = await requirePhiTestDatabase();
     const policy = { roles: [], jobs: [], events: [] };
     let profile = await writePhisPaymentProfile(pool, site.id, providerBinding.addonId, {
       key: "reach", providerKey: "@pgtest/payment-provider/test", mode: "test", credentialReferences: {},
       grants: [{ consumerAddonId: CONSUMER, operations: ["read"], merchantActions: { capture: policy, cancel: policy, refund: policy, profileRefresh: policy } }],
     }, false);
-    const asked: { currency: string; tax: string; minor: string }[] = [];
+    const asked: { currency: string; tax: string; usage: string | undefined }[] = [];
     let countries = ["CH", "DE"];
     let failing = false;
+    const every = { units: ["day", "week", "month", "year"], maxDays: null };
     const provider = { async probe(input: Parameters<PhisPaymentProviderV1["probe"]>[0]) {
-      asked.push({ currency: input.amount.currency, tax: input.pricing.tax, minor: input.amount.minor });
+      asked.push({ currency: input.amount.currency, tax: input.pricing.tax, usage: input.usage });
       if (failing) throw new Error("Provider is unavailable");
+      const merchant = input.pricing.tax === "merchant-of-record";
       return { merchantIdentity: "acct_test", mode: "test" as const, methods: [
-        { methodKey: "card", title: "Card", features: { captureModes: ["automatic"], checkoutKinds: ["redirect"], canPartialCapture: false, canCancel: true, canRefund: true, canPartialRefund: true,
-          pricing: { bases: ["final"], tax: ["none", "merchant-of-record"], maxDiscounts: 0, promotionCodes: "none", collectsCustomerDetails: true, collectsTaxIds: false,
-            merchantOfRecord: { countries, taxCategories: ["digital-goods"], businessTaxIds: ["charge"] } } } },
-        { methodKey: "local", title: "Local", features: { captureModes: ["automatic"], checkoutKinds: ["redirect"], canPartialCapture: false, canCancel: true, canRefund: true, canPartialRefund: true,
-          pricing: { bases: ["final"], tax: ["none"], maxDiscounts: 0, promotionCodes: "none", collectsCustomerDetails: false, collectsTaxIds: false, merchantOfRecord: null } } },
+        { methodKey: "card", title: "Card", features: { captureModes: ["automatic"], checkoutKinds: ["redirect"], flags: 14, currency: TEST_CURRENCY_FEATURES,
+          collection: { automatic: null, paymentRequest: every, providerManaged: null },
+          pricing: testPricingFeatures({ tax: ["none", "merchant-of-record"], collectsCustomerDetails: true,
+            merchantOfRecord: { countries, taxCategories: ["digital-goods"], businessTaxIds: ["charge"] } }) } },
+        ...(merchant ? [] : [{ methodKey: "local", title: "Local", features: { captureModes: ["automatic"], checkoutKinds: ["redirect"], flags: 14, currency: TEST_CURRENCY_FEATURES,
+          pricing: testPricingFeatures() } }]),
       ] };
     } } as unknown as PhisPaymentProviderV1;
     const engine = (unauthenticated = false, merchant = true) => new PhisPaymentEngine({ pool, scope: { siteId: site.id, siteKey: site.key, consumerAddonId: CONSUMER },
       signal: new AbortController().signal, publicBaseUrl: async () => `https://${site.key}.invalid`, resolveProvider: async () => provider,
       merchantAuthorized: async () => merchant, unauthenticated });
-    const first = await provider.probe({ amount: { currency: "CHF", minor: "100" }, captureMode: "automatic", checkoutKind: "redirect",
-      pricing: { basis: "final", tax: "none", discounts: 0, promotionCodes: "none" }, signal: new AbortController().signal });
-    const recordedAt = await recordPhisPaymentProfileProbe(pool, profile, "acct_test", "test", "CHF", first.methods);
+    const recorded = await recordPhisPaymentProfileFeatures(pool, profile, "acct_test", "test", "CHF", []);
     await setPhisPaymentProfileEnabled(pool, (await readPhisPaymentProfile(pool, site.id, "reach"))!, true);
     profile = (await readPhisPaymentProfile(pool, site.id, "reach"))!;
-    expect(Object.keys(profile.methods!)).toEqual(["CHF"]);
-    expect(profile.methods!.CHF!.probedAt).toBe(recordedAt);
-    expect(new Date(recordedAt).toISOString()).toBe(recordedAt);
+    expect(Object.keys(profile.features!)).toEqual(["CHF"]);
+    expect(profile.features!.CHF).toEqual(recorded);
+    expect(new Date(recorded.probedAt).toISOString()).toBe(recorded.probedAt);
 
     // A hook reads the recording and asks nobody; it may not ask again.
-    const reach = { currency: "CHF", probedAt: recordedAt, merchantOfRecord: { countries: ["CH", "DE"], taxCategories: ["digital-goods"], businessTaxIds: ["charge"] } };
-    expect(await engine(true).profileReach({ profileKey: "reach", currency: "CHF" })).toEqual(reach);
-    expect(await engine(true).profileReach({ profileKey: "reach", currency: "EUR" })).toBeNull();
-    await expect(engine(true).refreshProfileReach({ profileKey: "reach", currencies: ["CHF"] })).rejects.toMatchObject({ code: "forbidden" });
-    await expect(engine(false, false).refreshProfileReach({ profileKey: "reach", currencies: ["CHF"] })).rejects.toMatchObject({ code: "forbidden" });
+    expect(await engine(true).profileFeatures({ profileKey: "reach", currency: "CHF" })).toEqual({ currency: "CHF", probedAt: recorded.probedAt, policies: [] });
+    expect(await engine(true).profileFeatures({ profileKey: "reach", currency: "EUR" })).toBeNull();
+    await expect(engine(true).refreshProfileFeatures({ profileKey: "reach", currencies: ["CHF"] })).rejects.toMatchObject({ code: "forbidden" });
+    await expect(engine(false, false).refreshProfileFeatures({ profileKey: "reach", currencies: ["CHF"] })).rejects.toMatchObject({ code: "forbidden" });
     asked.length = 0;
 
     // Asked a moment ago (the recording above): too soon.
-    await expect(engine().refreshProfileReach({ profileKey: "reach", currencies: ["CHF"] })).rejects.toMatchObject({ code: "rate_limited" });
+    await expect(engine().refreshProfileFeatures({ profileKey: "reach", currencies: ["CHF"] })).rejects.toMatchObject({ code: "rate_limited" });
     expect(asked).toEqual([]);
 
     const ago = () => pool.query("UPDATE phis.payment_profiles SET probed_at = NOW() - INTERVAL '2 minutes' WHERE site_id = $1 AND key = 'reach'", [site.id]);
     await ago(); countries = ["CH", "DE", "FR"];
-    const refreshed = await engine().refreshProfileReach({ profileKey: "reach", currencies: ["EUR", "CHF"] });
-    expect(asked).toEqual([{ currency: "EUR", tax: "none", minor: "100" }, { currency: "CHF", tax: "none", minor: "100" }]);
-    expect(refreshed.map(entry => [entry.currency, entry.merchantOfRecord?.countries])).toEqual([["EUR", ["CH", "DE", "FR"]], ["CHF", ["CH", "DE", "FR"]]]);
+    const refreshed = await engine().refreshProfileFeatures({ profileKey: "reach", currencies: ["EUR", "CHF"] });
+    // Every currency: final/none first, then merchant-of-record, the policy the card declares, each in both usages.
+    expect(asked).toEqual(["EUR", "CHF"].flatMap(currency => [
+      { currency, tax: "none", usage: undefined }, { currency, tax: "none", usage: "recurring" },
+      { currency, tax: "merchant-of-record", usage: undefined }, { currency, tax: "merchant-of-record", usage: "recurring" }]));
+    expect(refreshed.map(entry => [entry.currency, entry.policies.map(p => `${p.basis}/${p.tax}`)])).toEqual([
+      ["EUR", ["final/none", "final/merchant-of-record"]], ["CHF", ["final/none", "final/merchant-of-record"]]]);
+    expect(refreshed[1]!.policies[1]!.merchantOfRecord?.countries).toEqual(["CH", "DE", "FR"]);
+    expect(refreshed[1]!.policies[0]!.collection).toEqual({ automatic: null, paymentRequest: every, providerManaged: null });
     profile = (await readPhisPaymentProfile(pool, site.id, "reach"))!;
-    expect(Object.keys(profile.methods!).sort()).toEqual(["CHF", "EUR"]);
+    expect(Object.keys(profile.features!).sort()).toEqual(["CHF", "EUR"]);
     expect(profile.revision).toBe(2);
-    expect(await engine(true).profileReach({ profileKey: "reach", currency: "EUR" })).toEqual(refreshed[0]);
-    await expect(engine().refreshProfileReach({ profileKey: "reach", currencies: ["CHF"] })).rejects.toMatchObject({ code: "rate_limited" });
+    expect(await engine(true).profileFeatures({ profileKey: "reach", currency: "EUR" })).toEqual(refreshed[0]);
+    // What a hook is told of the modes, from that recording.
+    expect(await engine(true).chooseCollection({ profileKey: "reach", currency: "CHF", pricing: { basis: "final", tax: "merchant-of-record", discounts: 0, promotionCodes: "none" },
+      interval: { unit: "year", count: 1 }, modes: ["automatic", "payment-request"] })).toEqual({ mode: "payment-request", features: every });
+    expect(await engine(true).chooseCollection({ profileKey: "reach", currency: "CHF", pricing: { basis: "final", tax: "none", discounts: 0, promotionCodes: "none" },
+      interval: { unit: "year", count: 1 }, modes: ["automatic"] })).toBeNull();
+    await expect(engine().refreshProfileFeatures({ profileKey: "reach", currencies: ["CHF"] })).rejects.toMatchObject({ code: "rate_limited" });
 
     // Two at once ask once.
     await ago(); asked.length = 0;
-    const both = await Promise.allSettled([engine().refreshProfileReach({ profileKey: "reach", currencies: ["CHF"] }), engine().refreshProfileReach({ profileKey: "reach", currencies: ["CHF"] })]);
+    const both = await Promise.allSettled([engine().refreshProfileFeatures({ profileKey: "reach", currencies: ["CHF"] }), engine().refreshProfileFeatures({ profileKey: "reach", currencies: ["CHF"] })]);
     expect(both.filter(entry => entry.status === "fulfilled")).toHaveLength(1);
     expect(both.find(entry => entry.status === "rejected")).toMatchObject({ reason: { code: "rate_limited" } });
-    expect(asked).toHaveLength(1);
+    expect(asked).toHaveLength(4);
 
     // A Provider that fails leaves what was recorded.
     await ago(); failing = true;
-    const before = (await readPhisPaymentProfile(pool, site.id, "reach"))!.methods;
-    await expect(engine().refreshProfileReach({ profileKey: "reach", currencies: ["CHF"] })).rejects.toMatchObject({ code: "provider_unavailable" });
-    expect((await readPhisPaymentProfile(pool, site.id, "reach"))!.methods).toEqual(before);
-    await expect(engine().refreshProfileReach({ profileKey: "reach", currencies: ["CHF"] })).rejects.toMatchObject({ code: "rate_limited" });
+    const before = (await readPhisPaymentProfile(pool, site.id, "reach"))!.features;
+    await expect(engine().refreshProfileFeatures({ profileKey: "reach", currencies: ["CHF"] })).rejects.toMatchObject({ code: "provider_unavailable" });
+    expect((await readPhisPaymentProfile(pool, site.id, "reach"))!.features).toEqual(before);
+    await expect(engine().refreshProfileFeatures({ profileKey: "reach", currencies: ["CHF"] })).rejects.toMatchObject({ code: "rate_limited" });
   });
   it("lists the profiles whose grant for the consumer holds read, with their state, by key", async () => {
     const pool = await requirePhiTestDatabase();
@@ -576,7 +597,7 @@ describe("durable Payment execution", () => {
     await writePhisPaymentProfile(pool, site.id, providerBinding.addonId, draft("list-c", [{ consumerAddonId: CONSUMER, operations: ["create"], merchantActions }]), false);
     await writePhisPaymentProfile(pool, site.id, providerBinding.addonId, draft("list-d", [{ consumerAddonId: "@pgtest/other-consumer", operations: ["read"], merchantActions }]), false);
     const b = (await readPhisPaymentProfile(pool, site.id, "list-b"))!;
-    await recordPhisPaymentProfileProbe(pool, b, "acct_test", "test", "CHF", []);
+    await recordPhisPaymentProfileFeatures(pool, b, "acct_test", "test", "CHF", []);
     await setPhisPaymentProfileEnabled(pool, (await readPhisPaymentProfile(pool, site.id, "list-b"))!, true);
     await setPhisPaymentProfileEnabled(pool, (await readPhisPaymentProfile(pool, site.id, "list-a"))!, false, true);
     const engine = (unauthenticated: boolean) => new PhisPaymentEngine({ pool, scope: { siteId: site.id, siteKey: site.key, consumerAddonId: CONSUMER },

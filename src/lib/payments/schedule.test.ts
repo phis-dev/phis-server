@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  PHIS_PAYMENT_DEFAULT_DUNNING, addPhisPaymentIntervals, nextPhisPaymentDunningAttempt, phisPaymentDunningDeadline,
+  addPhisPaymentIntervals, nextPhisPaymentDunningAttempt, phisPaymentUnusedShare, validatePhisPaymentDays,
   validatePhisPaymentDunningPolicy, validatePhisPaymentInterval,
 } from "./schedule.ts";
 
@@ -43,7 +43,7 @@ describe("the dunning policy", () => {
   const due = at("2026-06-01T00:00:00.000Z");
 
   it("counts every retry from the day the period fell due, not from the attempt before", () => {
-    const policy = { retryAfterDays: [3, 5, 7], onExhausted: "unpaid" } as const;
+    const policy = { retryAfterDays: [3, 5, 7] } as const;
 
     // Nothing is owed before the first charge was made at all.
     expect(nextPhisPaymentDunningAttempt(due, policy, 0)).toBeNull();
@@ -54,29 +54,56 @@ describe("the dunning policy", () => {
     expect(nextPhisPaymentDunningAttempt(due, policy, 4)).toBeNull();
   });
 
-  it("waits for a customer as long as it would have kept trying", () => {
-    expect(iso(phisPaymentDunningDeadline(due, { retryAfterDays: [3, 5, 7], onExhausted: "unpaid" }))).toBe("2026-06-08T00:00:00.000Z");
-    // A policy without retries gives no time either.
-    expect(iso(phisPaymentDunningDeadline(due, { retryAfterDays: [], onExhausted: "cancel" }))).toBe("2026-06-01T00:00:00.000Z");
+  it("takes a policy whose retries lie within the grace, and a copy of it", () => {
+    const stated = { retryAfterDays: [3, 5, 7] };
+    const policy = validatePhisPaymentDunningPolicy(stated, 7);
+    expect(policy).toEqual({ retryAfterDays: [3, 5, 7] });
+    expect(policy.retryAfterDays).not.toBe(stated.retryAfterDays);
+    // With a grace of 0 there is nothing to retry in.
+    expect(validatePhisPaymentDunningPolicy({ retryAfterDays: [] }, 0)).toEqual({ retryAfterDays: [] });
   });
 
-  it("gives the default where none is stated, and a copy of it", () => {
-    const policy = validatePhisPaymentDunningPolicy(null);
-    expect(policy).toEqual({ retryAfterDays: [3, 5, 7], onExhausted: "unpaid" });
-    expect(policy.retryAfterDays).not.toBe(PHIS_PAYMENT_DEFAULT_DUNNING.retryAfterDays);
-    expect(validatePhisPaymentDunningPolicy({ retryAfterDays: [], onExhausted: "cancel" })).toEqual({ retryAfterDays: [], onExhausted: "cancel" });
-  });
-
-  it("refuses retries that are out of order, on one day, too many or too late", () => {
+  it("refuses retries that are out of order, on one day, too many, past the grace or shaped otherwise", () => {
     const bad = [
-      { retryAfterDays: [5, 3], onExhausted: "unpaid" },
-      { retryAfterDays: [3, 3], onExhausted: "unpaid" },
-      { retryAfterDays: [0], onExhausted: "unpaid" },
-      { retryAfterDays: [61], onExhausted: "unpaid" },
-      { retryAfterDays: [1, 2, 3, 4, 5, 6, 7, 8, 9], onExhausted: "unpaid" },
-      { retryAfterDays: [3], onExhausted: "forgive" },
-      { retryAfterDays: "3", onExhausted: "unpaid" },
+      { retryAfterDays: [5, 3] },
+      { retryAfterDays: [3, 3] },
+      { retryAfterDays: [0] },
+      { retryAfterDays: [15] },
+      { retryAfterDays: [1, 2, 3, 4, 5, 6, 7, 8, 9] },
+      { retryAfterDays: [3], onExhausted: "unpaid" },
+      { retryAfterDays: "3" },
+      null,
     ];
-    for (const policy of bad) expect(() => validatePhisPaymentDunningPolicy(policy)).toThrow();
+    for (const policy of bad) expect(() => validatePhisPaymentDunningPolicy(policy, 14)).toThrow();
+    expect(() => validatePhisPaymentDunningPolicy({ retryAfterDays: [3] }, 2)).toThrow();
+  });
+});
+
+describe("lead and grace", () => {
+  it("are whole days from 0 to 30 and less than the shortest period", () => {
+    expect(validatePhisPaymentDays(14, { unit: "year", count: 1 }, 30)).toBe(14);
+    expect(validatePhisPaymentDays(0, { unit: "day", count: 1 }, 30)).toBe(0);
+    for (const [days, interval] of [[31, { unit: "year", count: 1 }], [-1, { unit: "month", count: 1 }], [1.5, { unit: "month", count: 1 }],
+      [28, { unit: "month", count: 1 }], [7, { unit: "week", count: 1 }], [1, { unit: "day", count: 1 }]] as const) {
+      expect(() => validatePhisPaymentDays(days, interval, 30)).toThrow();
+    }
+    expect(validatePhisPaymentDays(27, { unit: "month", count: 1 }, 30)).toBe(27);
+  });
+});
+
+describe("the unused share of a paid period", () => {
+  it("is floor(R * (end - at) / (end - start)) by the second, rounded down (PLANS 7.3)", () => {
+    // PhiVoice: EUR 4.99 for 1 Nov to 1 Dec, switched on 16 Nov 12:00 -- 14.5 of 30 days unused.
+    expect(phisPaymentUnusedShare(BigInt(499), at("2026-11-01T00:00:00Z"), at("2026-12-01T00:00:00Z"), at("2026-11-16T12:00:00Z"))).toBe(BigInt(241));
+    // Hosting: CHF 27.00 for 1 Oct to 1 Jan (92 days), switched on 1 Dec -- 31 days unused.
+    expect(phisPaymentUnusedShare(BigInt(2700), at("2026-10-01T00:00:00Z"), at("2027-01-01T00:00:00Z"), at("2026-12-01T00:00:00Z"))).toBe(BigInt(909));
+  });
+
+  it("is the whole amount before the start and nothing at or after the end", () => {
+    const start = at("2026-11-01T00:00:00Z"); const end = at("2026-12-01T00:00:00Z");
+    expect(phisPaymentUnusedShare(BigInt(499), start, end, at("2026-10-20T00:00:00Z"))).toBe(BigInt(499));
+    expect(phisPaymentUnusedShare(BigInt(499), start, end, end)).toBe(BigInt(0));
+    expect(phisPaymentUnusedShare(BigInt(499), start, end, at("2026-12-02T00:00:00Z"))).toBe(BigInt(0));
+    expect(phisPaymentUnusedShare(BigInt(0), start, end, at("2026-11-10T00:00:00Z"))).toBe(BigInt(0));
   });
 });

@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PhisPaymentDunningPolicy, PhisPaymentPricing, PhisPaymentSubscription } from "@phis/contracts/payments";
+import { PhisPaymentSubscriptionFlag, type PhisPaymentCollection, type PhisPaymentPricing, type PhisPaymentSubscription } from "@phis/contracts/payments";
 import { PhisPaymentEngine } from "@/lib/payments/engine";
 import { runDuePhisPaymentSubscriptions } from "@/lib/payments/runtime";
 import { addPhisPaymentIntervals } from "@/lib/payments/schedule";
 import { SITE_FLAG_ACTIVE } from "@/lib/site-flags";
-import { readPhisPaymentProfile, recordPhisPaymentProfileProbe, setPhisPaymentProfileEnabled, writePhisPaymentProfile } from "./payments.mts";
+import { readPhisPaymentProfile, recordPhisPaymentProfileFeatures, setPhisPaymentProfileEnabled, writePhisPaymentProfile } from "./payments.mts";
 import { closePhiTestPool, createPhiTestSite, dropPhiTestSites, requirePhiTestDatabase, type PhiTestSite } from "../../test/pg/harness";
 import { StoringProvider } from "../../test/pg/payment-storing-provider";
 
@@ -37,17 +37,20 @@ describe("subscriptions on Core's own schedule", () => {
     const profile = await writePhisPaymentProfile(pool, site.id, providerBinding.addonId, {
       key: "sandbox", providerKey: "@pgtest/subscription-provider/test", mode: "test", credentialReferences: {}, grants: [
         { consumerAddonId: CONSUMER, operations: ["read", "create", "refresh", "refund", "method-store", "method-read", "method-remove",
-          "subscription-read", "subscription-create", "subscription-cancel"], merchantActions: { capture: policy, cancel: policy, refund: policy, subscriptionEnd: policy, subscriptionPrice: policy } },
+          "subscription-read", "subscription-create", "subscription-cancel", "subscription-change"], merchantActions: { capture: policy, cancel: policy, refund: policy, subscriptionEnd: policy, subscriptionPrice: policy } },
         { consumerAddonId: OTHER_CONSUMER, operations: ["read", "create", "refresh", "method-store"], merchantActions: { capture: policy, cancel: policy, refund: policy } },
       ],
     }, false);
-    await recordPhisPaymentProfileProbe(pool, profile, "acct_stored", "test", "CHF", []);
+    await recordPhisPaymentProfileFeatures(pool, profile, "acct_stored", "test", "CHF", []);
     await setPhisPaymentProfileEnabled(pool, (await readPhisPaymentProfile(pool, site.id, "sandbox"))!, true);
   });
   afterAll(async () => {
     const pool = await requirePhiTestDatabase();
     // Fixture-only teardown; the product deliberately exposes no financial purge.
     await pool.query("DELETE FROM phis.addon_event_outbox WHERE site_id = $1", [site.id]);
+    await pool.query("DELETE FROM phis.payment_record_tasks WHERE site_id = $1", [site.id]);
+    await pool.query("DELETE FROM phis.payment_settlements WHERE site_id = $1", [site.id]);
+    await pool.query("DELETE FROM phis.payment_subscription_changes WHERE site_id = $1", [site.id]);
     await pool.query("DELETE FROM phis.payment_subscription_periods WHERE subscription_id IN (SELECT id FROM phis.payment_subscriptions WHERE site_id = $1)", [site.id]);
     await pool.query("DELETE FROM phis.payment_subscriptions WHERE site_id = $1", [site.id]);
     await pool.query("DELETE FROM phis.payment_refunds WHERE payment_id IN (SELECT id FROM phis.payments WHERE site_id = $1)", [site.id]);
@@ -69,10 +72,11 @@ describe("subscriptions on Core's own schedule", () => {
       recurring: { amount: { currency: "CHF", minor: "2700" }, pricing: FINAL, description: "Plan, one quarter" },
       // The first payment carries the one-time fee as well.
       first: { amount: { currency: "CHF", minor: "6300" }, pricing: FINAL, description: "Plan, first quarter and setup" },
+      collection: { mode: "automatic", dunning: { retryAfterDays: [3, 5, 7] } } as PhisPaymentCollection, graceDays: 14,
       methodKey: "card" as string | null, checkoutKind: "redirect" as const, returnPath: "/return", ...overrides };
   }
   /** A subscription whose first payment the customer has made: active, in its first period. */
-  async function running(overrides: { dunning?: PhisPaymentDunningPolicy; methodKey?: string } = {}) {
+  async function running(overrides: { collection?: PhisPaymentCollection; graceDays?: number; methodKey?: string; interval?: typeof QUARTER | { unit: "year" | "month"; count: number } } = {}) {
     const api = await service();
     const created = await api.createSubscription(agreement(overrides));
     remote.customerPays(created.payment.payment.id);
@@ -89,8 +93,8 @@ describe("subscriptions on Core's own schedule", () => {
 
     const created = await api.createSubscription(input);
 
-    expect(created.subscription).toMatchObject({ status: "pending", period: null, storedMethodId: null, nextChargeAt: null, reference: input.reference,
-      dunning: { retryAfterDays: [3, 5, 7], onExhausted: "unpaid" } });
+    expect(created.subscription).toMatchObject({ status: "pending", period: null, term: null, storedMethodId: null, nextChargeAt: null, reference: input.reference,
+      collection: { mode: "automatic", dunning: { retryAfterDays: [3, 5, 7] } }, graceDays: 14, flags: 0, pendingChange: null });
     // The first payment is an ordinary hosted payment that also stores the method.
     expect(created.payment.payment).toMatchObject({ status: "awaiting_customer", reference: `${input.reference}#0`, subscriptionId: created.subscription.id,
       periodIndex: 0, initiator: "customer", amount: { currency: "CHF", minor: "6300" } });
@@ -100,12 +104,14 @@ describe("subscriptions on Core's own schedule", () => {
     await api.refresh(created.payment.payment.id);
     const active = await read(api, created.subscription.id);
 
-    expect(active).toMatchObject({ status: "active", customerActionRequired: false, storedMethodId: created.payment.payment.storedMethodId, cancelAtPeriodEnd: false });
+    expect(active).toMatchObject({ status: "active", flags: 0, storedMethodId: created.payment.payment.storedMethodId });
     expect(active.period).toMatchObject({ index: 0 });
+    expect(active.term).toEqual({ startsAt: active.period!.startsAt, firstIndex: 0 });
     // One quarter from the capture, and that is when Core next acts.
     expect(active.period!.endsAt).toBe(addPhisPaymentIntervals(new Date(active.period!.startsAt), QUARTER, 1).toISOString());
     expect(active.nextChargeAt).toBe(active.period!.endsAt);
-    expect(await api.listSubscriptionPeriods(active.id)).toMatchObject([{ index: 0, status: "paid", paymentIds: [created.payment.payment.id], amount: { minor: "6300" } }]);
+    expect(await api.listSubscriptionPeriods(active.id)).toMatchObject([{ index: 0, status: "paid", paymentIds: [created.payment.payment.id], amount: { minor: "6300" },
+      requestedAt: null, changeId: null, endedEarlyAt: null, graceEndsAt: new Date(Date.parse(active.period!.startsAt) + 14 * DAY).toISOString() }]);
     // The consumer is told of the subscription itself, beside the payment.
     const { rows } = await (await requirePhiTestDatabase()).query<{ n: string }>(
       "SELECT count(*) AS n FROM phis.addon_event_outbox WHERE subscription_id = $1 AND subject_kind = 'subscription' AND event = 'payment.changed'", [active.id]);
@@ -147,7 +153,16 @@ describe("subscriptions on Core's own schedule", () => {
     // The checkout could compute the tax; the charges that follow could not.
     await expect(api.createSubscription(agreement({ recurring: { amount: { currency: "CHF", minor: "2700" }, pricing: net, description: "Plan" } })))
       .rejects.toMatchObject({ code: "unsupported_operation" });
-    await expect(api.createSubscription(agreement({ methodKey: "invoice" }))).rejects.toMatchObject({ code: "method_unavailable" });
+    // The invoice collects on request only; it is no method for a subscription charged without the customer.
+    await expect(api.createSubscription(agreement({ methodKey: "invoice" }))).rejects.toMatchObject({ code: "unsupported_operation" });
+    // Nor is a policy whose retries pass the grace, a grace past 30 days or the period, or a mode not built.
+    await expect(api.createSubscription(agreement({ graceDays: 5 }))).rejects.toMatchObject({ code: "invalid_input" });
+    await expect(api.createSubscription(agreement({ graceDays: 31 }))).rejects.toMatchObject({ code: "invalid_input" });
+    await expect(api.createSubscription(agreement({ interval: { unit: "week", count: 1 }, graceDays: 7, collection: { mode: "automatic", dunning: { retryAfterDays: [] } } })))
+      .rejects.toMatchObject({ code: "invalid_input" });
+    await expect(api.createSubscription(agreement({ collection: { mode: "automatic", dunning: { retryAfterDays: [3], onExhausted: "unpaid" } } as never })))
+      .rejects.toMatchObject({ code: "invalid_input" });
+    await expect(api.createSubscription(agreement({ collection: { mode: "provider-managed" } }))).rejects.toMatchObject({ code: "unsupported_operation" });
   });
 
   it("charges the next period when the paid one is over, once, on boundaries counted from the start", async () => {
@@ -184,7 +199,7 @@ describe("subscriptions on Core's own schedule", () => {
     await api.advanceSubscription(id, after(dueAt));
 
     const pastDue = await read(api, id);
-    expect(pastDue).toMatchObject({ status: "past_due", customerActionRequired: false, period: { index: 0 } });
+    expect(pastDue).toMatchObject({ status: "past_due", flags: 0, period: { index: 0 } });
     expect(pastDue.nextChargeAt).toBe(new Date(new Date(dueAt).getTime() + 3 * DAY).toISOString());
     expect((await api.listSubscriptionPeriods(id))[0]).toMatchObject({ index: 1, status: "open" });
 
@@ -202,25 +217,27 @@ describe("subscriptions on Core's own schedule", () => {
     expect((await api.listSubscriptionPeriods(id))[0]!.paymentIds).toHaveLength(2);
   });
 
-  it("stops trying when the policy is used up, and is paid again by the customer", async () => {
+  it("stops trying when the policy is used up, and is still paid by the customer within the grace", async () => {
     const { api, id, subscription } = await running();
     const dueAt = new Date(subscription.period!.endsAt).getTime();
-    // The first charge and the three retries of the default policy.
+    // The first charge and the three retries of the policy, all within the 14 days of grace.
     for (const day of [0, 3, 5, 7]) {
       remote.next = "declined";
       await api.advanceSubscription(id, new Date(dueAt + day * DAY + 1_000));
     }
 
-    const unpaid = await read(api, id);
-    expect(unpaid).toMatchObject({ status: "unpaid", nextChargeAt: null, period: { index: 0 } });
+    const waiting = await read(api, id);
+    expect(waiting).toMatchObject({ status: "past_due", nextChargeAt: new Date(dueAt + 14 * DAY).toISOString(), period: { index: 0 } });
     expect(remote.charges).toHaveLength(4);
-    expect((await api.listSubscriptionPeriods(id))[0]).toMatchObject({ index: 1, status: "failed" });
-    await api.advanceSubscription(id, new Date(dueAt + 30 * DAY));
+    expect((await api.listSubscriptionPeriods(id))[0]).toMatchObject({ index: 1, status: "open" });
+    // Nothing more is tried in the time that is left.
+    await api.advanceSubscription(id, new Date(dueAt + 10 * DAY));
     expect(remote.charges).toHaveLength(4);
 
     // The customer comes back and pays the open period on a checkout, which stores a method anew.
     const settle = await api.settleSubscription({ subscriptionId: id, idempotencyKey: randomUUID(), methodKey: "card", checkoutKind: "redirect", returnPath: "/return" });
     expect(settle.payment).toMatchObject({ status: "awaiting_customer", initiator: "customer", amount: { minor: "2700" }, periodIndex: 1 });
+    expect(settle.payment.storedMethodId).not.toBeNull();
     remote.customerPays(settle.payment.id);
     await api.refresh(settle.payment.id);
 
@@ -230,8 +247,24 @@ describe("subscriptions on Core's own schedule", () => {
     expect((await api.listSubscriptionPeriods(id))[0]).toMatchObject({ index: 1, status: "paid" });
   });
 
-  it("ends by itself where the policy says so", async () => {
-    const { api, id, subscription } = await running({ dunning: { retryAfterDays: [], onExhausted: "cancel" } });
+  it("fails the period and ends the subscription when the grace ends unpaid; nothing can be settled after", async () => {
+    const { api, id, subscription } = await running();
+    const dueAt = new Date(subscription.period!.endsAt).getTime();
+    for (const day of [0, 3, 5, 7]) {
+      remote.next = "declined";
+      await api.advanceSubscription(id, new Date(dueAt + day * DAY + 1_000));
+    }
+    await api.advanceSubscription(id, new Date(dueAt + 14 * DAY + 1_000));
+
+    expect(await read(api, id)).toMatchObject({ status: "canceled", nextChargeAt: null, flags: 0 });
+    expect((await api.listSubscriptionPeriods(id))[0]).toMatchObject({ index: 1, status: "failed" });
+    expect(remote.charges).toHaveLength(4);
+    await expect(api.settleSubscription({ subscriptionId: id, idempotencyKey: randomUUID(), methodKey: "card", checkoutKind: "redirect", returnPath: "/return" }))
+      .rejects.toMatchObject({ code: "invalid_state" });
+  });
+
+  it("ends at once on a declined renewal with a grace of 0", async () => {
+    const { api, id, subscription } = await running({ graceDays: 0, collection: { mode: "automatic", dunning: { retryAfterDays: [] } } });
     remote.next = "declined";
 
     await api.advanceSubscription(id, after(subscription.period!.endsAt));
@@ -241,7 +274,7 @@ describe("subscriptions on Core's own schedule", () => {
     expect((await api.listSubscriptionPeriods(id))[0]).toMatchObject({ index: 1, status: "failed" });
   });
 
-  it("waits for a customer who has to return instead of charging again, and only so long", async () => {
+  it("waits for a customer who has to return instead of charging again, and only until the grace ends", async () => {
     const { api, id, subscription } = await running();
     const dueAt = new Date(subscription.period!.endsAt).getTime();
     remote.next = "customer";
@@ -249,16 +282,15 @@ describe("subscriptions on Core's own schedule", () => {
     await api.advanceSubscription(id, new Date(dueAt + 1_000));
 
     const waiting = await read(api, id);
-    expect(waiting).toMatchObject({ status: "past_due", customerActionRequired: true });
-    // Until the day the last retry would have been.
-    expect(waiting.nextChargeAt).toBe(new Date(dueAt + 7 * DAY).toISOString());
+    expect(waiting).toMatchObject({ status: "past_due", flags: PhisPaymentSubscriptionFlag.CustomerActionRequired });
+    expect(waiting.nextChargeAt).toBe(new Date(dueAt + 14 * DAY).toISOString());
     // No retry can cure it, so none is made on the days a declined charge would have been retried.
     await api.advanceSubscription(id, new Date(dueAt + 3 * DAY + 1_000));
     await api.advanceSubscription(id, new Date(dueAt + 5 * DAY + 1_000));
     expect(remote.charges).toHaveLength(1);
 
-    await api.advanceSubscription(id, new Date(dueAt + 7 * DAY + 1_000));
-    expect(await read(api, id)).toMatchObject({ status: "unpaid", nextChargeAt: null });
+    await api.advanceSubscription(id, new Date(dueAt + 14 * DAY + 1_000));
+    expect(await read(api, id)).toMatchObject({ status: "canceled", nextChargeAt: null });
   });
 
   it("takes a customer's payment in time as the end of the waiting", async () => {
@@ -270,7 +302,7 @@ describe("subscriptions on Core's own schedule", () => {
     remote.customerPays(settle.payment.id);
     await api.refresh(settle.payment.id);
 
-    expect(await read(api, id)).toMatchObject({ status: "active", customerActionRequired: false, period: { index: 1 } });
+    expect(await read(api, id)).toMatchObject({ status: "active", flags: 0, period: { index: 1 } });
     // Nothing is open any more, so there is nothing to settle twice.
     await expect(api.settleSubscription({ subscriptionId: id, idempotencyKey: randomUUID(), methodKey: "card", checkoutKind: "redirect", returnPath: "/return" }))
       .rejects.toMatchObject({ code: "invalid_state" });
@@ -283,7 +315,7 @@ describe("subscriptions on Core's own schedule", () => {
 
     await api.advanceSubscription(id, after(subscription.period!.endsAt));
 
-    expect(await read(api, id)).toMatchObject({ status: "past_due", customerActionRequired: true });
+    expect(await read(api, id)).toMatchObject({ status: "past_due", flags: PhisPaymentSubscriptionFlag.CustomerActionRequired });
     expect((await api.getStoredMethod(subscription.storedMethodId!))!.status).toBe("invalid");
   });
 
@@ -313,9 +345,9 @@ describe("subscriptions on Core's own schedule", () => {
     const { api, id, subscription } = await running();
 
     const cancelled = await api.cancelSubscription({ subscriptionId: id, at: "period-end" });
-    expect(cancelled).toMatchObject({ status: "active", cancelAtPeriodEnd: true, nextChargeAt: subscription.period!.endsAt });
+    expect(cancelled).toMatchObject({ status: "active", flags: PhisPaymentSubscriptionFlag.CancelAtPeriodEnd, nextChargeAt: subscription.period!.endsAt });
     // Changed their mind, and changed it back.
-    expect(await api.resumeSubscription(id)).toMatchObject({ cancelAtPeriodEnd: false });
+    expect(await api.resumeSubscription(id)).toMatchObject({ flags: 0 });
     await api.cancelSubscription({ subscriptionId: id, at: "period-end" });
 
     await api.advanceSubscription(id, after(subscription.period!.endsAt));
@@ -409,7 +441,8 @@ describe("subscriptions on Core's own schedule", () => {
     await pool.query("UPDATE phis.sites SET flags = flags | $2 WHERE id = $1", [site.id, SITE_FLAG_ACTIVE]);
     // The paid period is made to be over, as far as the clock in the database can tell.
     const past = new Date(Date.now() - 60_000).toISOString();
-    await pool.query(`UPDATE phis.payment_subscriptions SET next_charge_at = $2::timestamptz, record = jsonb_set(record, '{nextChargeAt}', to_jsonb($3::text)) WHERE id = $1`, [id, past, past]);
+    await pool.query(`UPDATE phis.payment_subscriptions SET next_charge_at = $2::timestamptz,
+      record = jsonb_set(jsonb_set(record, '{nextChargeAt}', to_jsonb($3::text)), '{period,endsAt}', to_jsonb($3::text)) WHERE id = $1`, [id, past, past]);
 
     const taken = await runDuePhisPaymentSubscriptions(100);
 

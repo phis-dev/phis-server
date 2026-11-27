@@ -11,7 +11,7 @@ import {
 import { claimDuePhisPaymentSubscriptions, releasePhisPaymentSubscription } from "../../db/payment-subscriptions.mts";
 import { withPoolTransaction } from "../db-transaction.ts";
 import { resolvePhisServiceProvider } from "../addons/services.ts";
-import { holdsPhisSiteAccess } from "../addons/site-access.ts";
+import { holdsPhisBillingRole, holdsPhisSiteAccess } from "../addons/site-access.ts";
 import { buildPhisAddonRolesCapability } from "../addons/roles-capability.ts";
 import { schedulePhisAddonEventDelivery } from "../addons/event-trigger.ts";
 import { resolvePhiSecret } from "../secrets/resolver";
@@ -20,6 +20,7 @@ import { PHIS_SERVICE_KINDS, PHIS_SITE_ACCESS } from "@phis/contracts/addon";
 import { PhisPaymentEngine, type PhisPaymentProviderFailure } from "./engine.ts";
 import { createPhisPaymentProvider } from "./provider.ts";
 import { reconcilePhisPayments } from "./recovery.ts";
+import { collectPhisPaymentRecords, type PhisPaymentRecordCollector } from "./records.ts";
 import { PhisPaymentError, requirePhisPaymentReference } from "./validation.ts";
 import type { PhisPaymentAuthority, PhisPaymentProfile, PhisPaymentScope } from "./types.ts";
 
@@ -72,6 +73,8 @@ export function buildPhisPaymentsCapability(input: {
     publicBaseUrl: async () => { const site = await getSiteByKey(scope.siteKey); if (!site) throw new PhisPaymentError("not_found"); return site.publicBaseUrl; },
     resolveProvider: profile => provider(profile, scope.siteKey),
     unauthenticated: authority.kind === "hook",
+    // The Site role, never the Site access `accounting`, and only of a person acting (owner, 2026-11-27).
+    billingStaff: async () => authority.kind === "request" && authority.actorUserId !== null && holdsPhisBillingRole(scope.siteId, authority.actorUserId),
     merchantAuthorized: async (_action, policy) => {
       if (authority.kind === "hook") return false;
       if (authority.kind === "job") return manifest.jobs.some(j => j.id === authority.id) && policy.jobs.includes(authority.id);
@@ -86,7 +89,8 @@ export function buildPhisPaymentsCapability(input: {
   return Object.freeze({
     listProfiles: engine.listProfiles.bind(engine), listMethods: engine.listMethods.bind(engine),
     // Reads and writes the profile's recording only: no payment changes, so there is no event to deliver.
-    profileReach: engine.profileReach.bind(engine), refreshProfileReach: engine.refreshProfileReach.bind(engine),
+    profileFeatures: engine.profileFeatures.bind(engine), refreshProfileFeatures: engine.refreshProfileFeatures.bind(engine),
+    chooseCollection: engine.chooseCollection.bind(engine),
     create: afterPaymentCommit(scope.siteId, engine.create.bind(engine)), get: engine.get.bind(engine),
     getOperation: engine.getOperation.bind(engine), getRefund: engine.getRefund.bind(engine), complete: afterPaymentCommit(scope.siteId, engine.complete.bind(engine)),
     refresh: afterPaymentCommit(scope.siteId, engine.refresh.bind(engine)), capture: afterPaymentCommit(scope.siteId, engine.capture.bind(engine)),
@@ -102,6 +106,12 @@ export function buildPhisPaymentsCapability(input: {
     setupMethod: afterPaymentCommit(scope.siteId, engine.setupMethod.bind(engine)),
     refreshStoredMethod: afterPaymentCommit(scope.siteId, engine.refreshStoredMethod.bind(engine)),
     changeSubscriptionPrice: afterPaymentCommit(scope.siteId, engine.changeSubscriptionPrice.bind(engine)),
+    previewSubscriptionChange: engine.previewSubscriptionChange.bind(engine),
+    changeSubscription: afterPaymentCommit(scope.siteId, engine.changeSubscription.bind(engine)),
+    cancelSubscriptionChange: afterPaymentCommit(scope.siteId, engine.cancelSubscriptionChange.bind(engine)),
+    listSubscriptionChanges: engine.listSubscriptionChanges.bind(engine),
+    subscriptionCredit: engine.subscriptionCredit.bind(engine),
+    listSettlements: engine.listSettlements.bind(engine),
   });
 }
 
@@ -169,6 +179,28 @@ export async function reconcileUnresolvedPhisPayments(signal: AbortSignal = new 
   return { cleared: result.cleared, detail: result.detail };
 }
 
+/**
+ * The Core job `payments.records.collect`: what Providers document and settle for captures and refunds,
+ * asked after the fact and again until it is there. Reaches the Provider as the schedule does.
+ */
+export async function collectDuePhisPaymentRecords(signal: AbortSignal = new AbortController().signal, archive?: {
+  collectDocuments: PhisPaymentRecordCollector; gaveUp: (task: { siteId: number; paymentId: string; refundId: string | null; kind: string }) => Promise<void>;
+}) {
+  const result = await collectPhisPaymentRecords({
+    pool: getPool(), signal, resolveProvider: (profile, siteKey) => provider(profile, siteKey), collectDocuments: archive?.collectDocuments,
+    gaveUp: archive?.gaveUp,
+    failed: (task, error) => logRuntimeEvent("warn", "payment.records.attempt_failed", {
+      message: `Collecting the ${task.kind} of a payment did not succeed this time.`,
+      siteKey: task.siteKey,
+      pluginKey: task.consumerAddonId,
+      error: normalizeLogThrowable(error),
+      meta: { paymentId: task.paymentId, refundId: task.refundId, kind: task.kind, attempts: task.attempts },
+    }),
+  });
+  for (const siteId of result.siteIds) schedulePhisAddonEventDelivery(siteId);
+  return result;
+}
+
 /** Available only for a dispatcher-bound hook. Successful verification grants no ambient authority. */
 export function buildPhisPaymentNotificationsCapability(input: {
   scope: PhisPaymentScope; method: string; headers: Readonly<Record<string, string>>; body: Uint8Array; signal: AbortSignal;
@@ -210,6 +242,8 @@ export function buildPhisPaymentNotificationsCapability(input: {
       if (verified.outcome === "unavailable") throw refused("provider_unavailable", "the Provider could not verify it now");
       if (verified.outcome === "irrelevant") return { outcome: "ignored" as const };
       requirePhisPaymentReference(verified.reference);
+      // A subscription the Provider runs (`provider-managed`) is prepared and not built: nothing of Core follows one.
+      if (verified.subject === "subscription") return { outcome: "ignored" as const };
       if (verified.subject === "stored-method") {
         /*
          * A stored method changed outside phis: revoked by the payer, expired, replaced. There is no

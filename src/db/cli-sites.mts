@@ -16,7 +16,6 @@ export type PhiCliSiteRecord = {
   defaultLocale: string;
   availableLocales: string[];
   timeZone: string;
-  entitlementGraceDays: number;
   /** How many days the users:v1 access log is kept (`sites.users_access_log_days`). */
   usersAccessLogDays: number;
   mailFrom?: string;
@@ -34,7 +33,6 @@ type SiteRow = {
   default_locale: string;
   available_locales: string[] | null;
   time_zone: string;
-  entitlement_grace_days: number;
   users_access_log_days: number;
   mail_from: string | null;
   contact_recipient: string | null;
@@ -52,7 +50,6 @@ function mapSiteRow(row: SiteRow): PhiCliSiteRecord {
     defaultLocale: row.default_locale,
     availableLocales: row.available_locales ?? [row.default_locale],
     timeZone: row.time_zone,
-    entitlementGraceDays: row.entitlement_grace_days,
     usersAccessLogDays: row.users_access_log_days,
     mailFrom: row.mail_from ?? undefined,
     contactRecipient: row.contact_recipient ?? undefined,
@@ -105,7 +102,7 @@ export async function insertPhiSite(db: Pick<PoolClient, "query">, input: PhiSit
      )
      VALUES ($1, $2, $3, $4, $5::varchar(8)[], $13, $6, '{}'::jsonb, $7, $8, $9, $10, $10, $11, $12)
      RETURNING id, key, name, hostname, flags, public_base_url, support_email, default_locale,
-               available_locales, time_zone, entitlement_grace_days, users_access_log_days, mail_from, contact_recipient`,
+               available_locales, time_zone, users_access_log_days, mail_from, contact_recipient`,
     [
       input.key,
       input.name,
@@ -150,7 +147,7 @@ export async function deletePhiCliSiteByKey(pool: Pool, siteKey: string) {
 export async function listPhiCliSites(pool: Pool) {
   const { rows } = await pool.query<SiteRow>(
     `SELECT id, key, name, hostname, flags, public_base_url, support_email, default_locale,
-            available_locales, time_zone, entitlement_grace_days, users_access_log_days, mail_from, contact_recipient
+            available_locales, time_zone, users_access_log_days, mail_from, contact_recipient
      FROM phis.sites
      ORDER BY id`,
   );
@@ -160,7 +157,7 @@ export async function listPhiCliSites(pool: Pool) {
 export async function getPhiCliSiteByKey(pool: Pool, siteKey: string) {
   const { rows } = await pool.query<SiteRow>(
     `SELECT id, key, name, hostname, flags, public_base_url, support_email, default_locale,
-            available_locales, time_zone, entitlement_grace_days, users_access_log_days, mail_from, contact_recipient
+            available_locales, time_zone, users_access_log_days, mail_from, contact_recipient
      FROM phis.sites
      WHERE key = $1
      LIMIT 1`,
@@ -188,7 +185,6 @@ export async function updatePhiCliSite(pool: Pool, input: {
   publicBaseUrl?: string;
   supportEmail?: string;
   timeZone?: string;
-  entitlementGraceDays?: number;
   usersAccessLogDays?: number;
   mailFrom: string;
   mailFromName: string;
@@ -204,12 +200,11 @@ export async function updatePhiCliSite(pool: Pool, input: {
          mail_from_name = $7,
          contact_recipient = $8,
          time_zone = COALESCE($9, time_zone),
-         entitlement_grace_days = COALESCE($10::smallint, entitlement_grace_days),
-         users_access_log_days = COALESCE($11::smallint, users_access_log_days),
+         users_access_log_days = COALESCE($10::smallint, users_access_log_days),
          updated_at = NOW()
      WHERE key = $1
      RETURNING id, key, name, hostname, flags, public_base_url, support_email, default_locale,
-               available_locales, time_zone, entitlement_grace_days, users_access_log_days, mail_from, contact_recipient`,
+               available_locales, time_zone, users_access_log_days, mail_from, contact_recipient`,
     [
       input.siteKey,
       input.name ?? null,
@@ -220,7 +215,6 @@ export async function updatePhiCliSite(pool: Pool, input: {
       input.mailFromName,
       input.contactRecipient,
       input.timeZone ?? null,
-      input.entitlementGraceDays ?? null,
       input.usersAccessLogDays ?? null,
     ],
   );

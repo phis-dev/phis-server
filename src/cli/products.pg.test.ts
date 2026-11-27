@@ -216,13 +216,15 @@ describe.skipIf(!configured)("phis product and phis entitlement", () => {
       VALUES ($1, $1, '0.1.0', '^1', repeat('0', 64), 'pgtest') ON CONFLICT (addon_id) DO NOTHING`, [SHOP]);
     await pool.query(`INSERT INTO phis.payment_profiles (site_id, key, provider_addon_id, draft) VALUES ($1, 'sub', $2, '{}'::jsonb)`, [site.id, SHOP]);
     await pool.query(`INSERT INTO phis.payment_subscriptions (id, site_id, consumer_addon_id, profile_key, idempotency_key, request, record)
-      VALUES ($1::uuid, $2, $3, 'sub', 'k', '{}'::jsonb, $4::jsonb)`, [subscriptionId, site.id, SHOP, JSON.stringify({ id: subscriptionId, status: "active", period: null, endedAt: null })]);
+      VALUES ($1::uuid, $2, $3, 'sub', 'k', '{}'::jsonb, $4::jsonb)`, [subscriptionId, site.id, SHOP, JSON.stringify({ id: subscriptionId, status: "active", period: null, endedAt: null,
+        collection: { mode: "automatic", dunning: { retryAfterDays: [] } }, graceDays: 14, flags: 0 })]);
     const subject = await pool.query<{ id: number }>(`SELECT s.id FROM phis.entitlement_subjects s WHERE s.site_id = $1 AND s.user_id = $2`, [site.id, userId]);
     await pool.query(`INSERT INTO phis.entitlements (site_id, subject_id, product, source, reference, subscription_id) VALUES ($1, $2, $3, $4, 'bound', $5::uuid)`,
       [site.id, subject.rows[0]!.id, id("subbed"), SHOP, subscriptionId]);
     const listed = await entitlement(["list"], { user: String(userId), product: id("subbed") });
     expect(listed.lines[0]).toContain(`subscription ${subscriptionId}`);
-    expect(listed.lines[0]).toContain("not valid");
+    // Without a paid period the entry counts for nothing: it says why.
+    expect(listed.lines[0]).toContain("ended");
     // The hand grant has no flag for it (the argument parser refuses one), and the entries it writes are not bound.
     expect((await entitlement(["grant"], { user: String(userId), product: id("subbed"), reference: "h" })).lines[0]).not.toContain("subscription");
     await pool.query(`DELETE FROM phis.entitlements WHERE site_id = $1`, [site.id]);

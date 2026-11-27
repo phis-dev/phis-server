@@ -7,7 +7,7 @@ import { reconcilePhisPayments } from "@/lib/payments/recovery";
 import { reconcileUnresolvedPhisPayments } from "@/lib/payments/runtime";
 import { withPoolTransaction } from "@/lib/db-transaction";
 import {
-  claimPhisPayment, readPhisPayment, readPhisPaymentProfile, recordPhisPaymentProfileProbe, setPhisPaymentProfileEnabled,
+  claimPhisPayment, readPhisPayment, readPhisPaymentProfile, recordPhisPaymentProfileFeatures, setPhisPaymentProfileEnabled,
   writePhisPaymentProfile,
 } from "./payments.mts";
 import { closePhiTestPool, createPhiTestSite, dropPhiTestSites, requirePhiTestDatabase, type PhiTestSite } from "../../test/pg/harness";
@@ -62,7 +62,7 @@ describe("payment reconciliation as a job", () => {
         { consumerAddonId: CONSUMER, operations: ["read", "create", "refresh"], merchantActions: { capture: policy, cancel: policy, refund: policy } },
       ],
     }, false);
-    await recordPhisPaymentProfileProbe(pool, profile, "acct_stored", "test", "CHF", []);
+    await recordPhisPaymentProfileFeatures(pool, profile, "acct_stored", "test", "CHF", []);
     await setPhisPaymentProfileEnabled(pool, (await readPhisPaymentProfile(pool, site.id, "sandbox"))!, true);
   });
   afterAll(async () => {
@@ -90,7 +90,7 @@ describe("payment reconciliation as a job", () => {
       methodKey: "card", checkoutKind: "redirect", returnPath: "/return" });
     const id = created.payment.id;
     remote.customerPays(id, null);
-    await pool.query(`UPDATE phis.payments SET record = jsonb_set(record, '{reconciliationRequired}', 'true') WHERE id = $1`, [id]);
+    await pool.query(`UPDATE phis.payments SET record = jsonb_set(record, '{flags}', '1') WHERE id = $1`, [id]);
     return id;
   }
   const status = async (id: string) => (await readPhisPayment(await requirePhiTestDatabase(), site.id, id))!.record.status;

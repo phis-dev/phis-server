@@ -1,16 +1,8 @@
 import type {
-  PhisPayment, PhisPaymentFeatures, PhisPaymentOperation, PhisPaymentProfileDraft, PhisPaymentProviderBinding,
-  PhisPaymentProviderCommand, PhisPaymentRefund, PhisPaymentProviderProbe, PhisPaymentStoredMethod, PhisPaymentSubscription,
+  PhisPayment, PhisPaymentFeatures, PhisPaymentOperation, PhisPaymentProfileDraft, PhisPaymentProfileFeatures, PhisPaymentProviderBinding,
+  PhisPaymentProviderCommand, PhisPaymentRefund, PhisPaymentStoredMethod, PhisPaymentSubscription, PhisPaymentSubscriptionChange,
 } from "@phis/contracts/payments";
-
-/**
- * What the Provider answered when Core last asked in one currency: the methods of that probe, as
- * validated. `phis.payment_profiles.methods`, keyed by the uppercase currency code.
- */
-export type PhisPaymentProfileProbeRecord = {
-  probedAt: string;
-  methods: PhisPaymentProviderProbe["methods"];
-};
+import type { PhisEntitlementSubject } from "@phis/contracts/entitlements";
 
 export type PhisPaymentProfile = PhisPaymentProfileDraft & {
   siteId: number;
@@ -21,8 +13,11 @@ export type PhisPaymentProfile = PhisPaymentProfileDraft & {
   retired: boolean;
   /** When Core last asked the Provider about this profile, in any currency. */
   probedAt: string | null;
-  /** The last probe in each currency it was asked in; `null` until the first. */
-  methods: Readonly<Record<string, PhisPaymentProfileProbeRecord>> | null;
+  /**
+   * What the Provider declared when Core last asked in each currency, per pricing policy
+   * (`phis.payment_profiles.features`, keyed by the uppercase currency code); `null` until the first probe.
+   */
+  features: Readonly<Record<string, PhisPaymentProfileFeatures>> | null;
 };
 
 export type PhisStoredPayment = {
@@ -43,6 +38,9 @@ export type PhisStoredPayment = {
    * claimed after it has observed the Provider. Null when no notification waits.
    */
   notifiedGeneration: number | null;
+  /** Whose documents this payment's are (`billing:v1`) and their list line; Core's own, never in the record. */
+  documentSubject: PhisEntitlementSubject | null;
+  documentLabel: string | null;
 };
 
 export type PhisStoredPaymentCommand = PhisPaymentProviderCommand extends infer T
@@ -73,8 +71,9 @@ export type PhisStoredPaymentMethod = {
 };
 
 /**
- * A subscription with what only Core sees: the request it was created from, for idempotency, the start
- * of its first period, from which every boundary is computed, and the scheduler's lease where one holds.
+ * A subscription with what only Core sees: the request it was created from, for idempotency, the start of
+ * its current term and the index of the term's first period, from which every boundary is computed (the
+ * record's `term`, mirrored for the scheduler), and the scheduler's lease where one holds.
  */
 export type PhisStoredPaymentSubscription = {
   siteId: number;
@@ -82,7 +81,16 @@ export type PhisStoredPaymentSubscription = {
   record: PhisPaymentSubscription;
   request: Record<string, unknown>;
   anchorAt: string | null;
+  termFirstIndex: number;
   leaseToken: string | null;
+};
+
+/** A change of a subscription's terms with the request it was made from, for idempotency. */
+export type PhisStoredPaymentSubscriptionChange = {
+  siteId: number;
+  consumerAddonId: string;
+  record: PhisPaymentSubscriptionChange;
+  request: Record<string, unknown>;
 };
 
 /** Assigned by the dispatcher/job/event runner, never accepted from request arguments. */

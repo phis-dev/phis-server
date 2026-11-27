@@ -7,6 +7,7 @@ import {
   canPhiViewerAccess,
   PHI_CORE_ROLE_PROVIDER_ID,
   PHI_ACCESS_ACCOUNTING,
+  PHI_ACCESS_BILLING,
   PHI_ACCESS_CONTENT_EDITING,
   PHI_ACCESS_SITE_MAINTENANCE,
   PHI_ACCESS_PUBLISHING,
@@ -117,4 +118,14 @@ export function phisSiteAccessCoreRoleFlags(access: PhisSiteAccess): number {
     throw new Error(`The Site access "${access}" is not a Core role mask.`);
   }
   return policy.allowedRoleFlags;
+}
+
+/**
+ * Whether a person holds the Site role Admin or Accountant (`PHI_ACCESS_BILLING`): who reads every billing
+ * document of the Site and what its payments settled. Not a Site access an Add-on may name; Core asks it
+ * for the acting user itself.
+ */
+export async function holdsPhisBillingRole(siteId: number, userId: number) {
+  const role = await getEffectiveUserSiteAuthorization(userId, siteId);
+  return role.enabled && canPhiViewerAccess({ authenticated: true, roleClaims: role.roleClaims, groupClaims: role.groupClaims }, PHI_ACCESS_BILLING);
 }

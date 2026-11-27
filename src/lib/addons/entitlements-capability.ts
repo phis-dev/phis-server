@@ -2,6 +2,10 @@ import "server-only";
 
 import {
   PHIS_ENTITLEMENT_CORE_SOURCE,
+  PHIS_ENTITLEMENT_NAMED_MAX,
+  PhisEntitlementFlag,
+  PhisEntitlementListFlag,
+  PhisProductFlag,
   type PhisEntitlementSubject,
   type PhisEntitlementsCapabilityV1,
 } from "@phis/contracts/addon";
@@ -23,6 +27,7 @@ import {
   isEntitlementSourceAllowed,
   isSubscriptionOfAddon,
   listEntitlements,
+  listNamedEntitlements,
   readEntitlementState,
   readEntitlementStates,
   redeliverEntitlementChanged,
@@ -66,8 +71,19 @@ function readInstant(value: string | null | undefined, name: string): string | n
   return new Date(value).toISOString();
 }
 
-function readQuantity(value: number | null | undefined, product: Pick<PhisProduct, "counted"> & { id: string }): number | null {
-  if (!product.counted) {
+/** Every bit `list` knows; another is refused rather than read as nothing. */
+const LIST_FLAGS = PhisEntitlementListFlag.ResolveBundles;
+
+function readFlagBits(value: unknown, allowed: number, name: string): number {
+  if (value === undefined) return 0;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || (value & ~allowed) !== 0) {
+    throw new PhisAddonEntitlementsError(`${name} carries a bit that is not accepted here.`);
+  }
+  return value;
+}
+
+function readQuantity(value: number | null | undefined, product: Pick<PhisProduct, "flags"> & { id: string }): number | null {
+  if ((product.flags & PhisProductFlag.Counted) === 0) {
     if (value !== undefined && value !== null) {
       throw new PhisAddonEntitlementsError(`Product "${product.id}" does not count; an entry of it carries no quantity.`);
     }
@@ -120,10 +136,10 @@ export function buildPhisAddonEntitlementsCapability(input: {
    * product's supplier, or it is the supplier and the product is `free`. The supplier is read from the
    * id, so an entry whose product is gone can still be changed by whoever was allowed.
    */
-  const requireWritable = async (call: string, id: PhisProductId, product: Pick<PhisProduct, "free"> | null) => {
+  const requireWritable = async (call: string, id: PhisProductId, product: Pick<PhisProduct, "flags"> | null) => {
     requireBelievableCaller(call);
     const { supplier } = splitPhisProductId(readProductId(call, id));
-    const ownFree = supplier === addonId && product?.free === true;
+    const ownFree = supplier === addonId && product !== null && (product.flags & PhisProductFlag.Free) !== 0;
     if (!ownFree && !await isEntitlementSourceAllowed(getPool(), siteId, supplier, addonId)) {
       throw new PhisAddonEntitlementsError(`${addonId} may not write entitlements for product "${id}" on this Site.`);
     }
@@ -210,11 +226,9 @@ export function buildPhisAddonEntitlementsCapability(input: {
       return { queued: queued > 0 ? written(queued) : queued };
     },
 
-    async list({ subject, subjects, product, resolveBundles }) {
+    async list({ subject, subjects, product, flags }) {
       requireBelievableCaller("list");
-      if (resolveBundles !== undefined && typeof resolveBundles !== "boolean") {
-        throw new PhisAddonEntitlementsError(`${addonId} called entitlements.list with resolveBundles that is not a boolean.`);
-      }
+      const resolveBundles = (readFlagBits(flags, LIST_FLAGS, `${addonId} called entitlements.list with flags that`) & PhisEntitlementListFlag.ResolveBundles) !== 0;
       if (subjects !== undefined) {
         if (subject !== undefined) {
           throw new PhisAddonEntitlementsError(`${addonId} called entitlements.list with both subject and subjects; one names whom it lists.`);
@@ -224,11 +238,30 @@ export function buildPhisAddonEntitlementsCapability(input: {
         }
         if (subjects.length === 0) return [];
         // One statement for all of them; a reference that is nobody here simply has no entries.
-        return whole(await listEntitlements(getPool(), { siteId, subjectReferences: [...new Set(subjects)], product: product ?? null, resolveBundles: resolveBundles === true }));
+        return whole(await listEntitlements(getPool(), { siteId, subjectReferences: [...new Set(subjects)], product: product ?? null, resolveBundles }));
       }
       // Without a subject and without anybody acting there is nobody to list for; a Site-wide read is not offered.
       const row = await resolveSubject(subject);
-      return row ? whole(await listEntitlements(getPool(), { siteId, subjectId: row.id, product: product ?? null, resolveBundles: resolveBundles === true })) : [];
+      return row ? whole(await listEntitlements(getPool(), { siteId, subjectId: row.id, product: product ?? null, resolveBundles })) : [];
+    },
+
+    async listNamed({ entries }) {
+      requireBelievableCaller("listNamed");
+      if (!Array.isArray(entries) || entries.length > PHIS_ENTITLEMENT_NAMED_MAX) {
+        throw new PhisAddonEntitlementsError(`${addonId} called entitlements.listNamed with entries that is not a list of at most ${PHIS_ENTITLEMENT_NAMED_MAX} names.`);
+      }
+      if (entries.length === 0) return [];
+      const names = entries.map((entry) => {
+        if (!entry || typeof entry !== "object" || typeof entry.source !== "string" || typeof entry.reference !== "string"
+          || (entry.subject !== undefined && typeof entry.subject !== "string")) {
+          throw new PhisAddonEntitlementsError(`${addonId} called entitlements.listNamed with a name that is not { source, reference, product, subject? }.`);
+        }
+        return { source: entry.source, reference: entry.reference, product: readProductId("listNamed", entry.product), subject: entry.subject };
+      });
+      // A name without a subject is the acting person's; with nobody acting it names nobody's entry.
+      const acting = names.some((name) => name.subject === undefined) && actorUserId != null
+        ? await ensureEntitlementSubject(getPool(), siteId, actorUserId) : null;
+      return listNamedEntitlements(getPool(), { siteId, entries: names, fallbackSubject: acting });
     },
 
     async grant({ subject, product, reference, startsAt, endsAt, subscriptionId, quantity }) {
@@ -257,17 +290,26 @@ export function buildPhisAddonEntitlementsCapability(input: {
       }
       const entry = await grantEntitlement(getPool(), {
         siteId, subjectId: row.id, product: id, source: addonId, reference: readReference(reference),
-        startsAt: starts, endsAt: ends, quantity: readQuantity(quantity, found), counted: found.counted, subscriptionId: subscriptionId ?? null,
+        startsAt: starts, endsAt: ends, quantity: readQuantity(quantity, found), counted: (found.flags & PhisProductFlag.Counted) !== 0, subscriptionId: subscriptionId ?? null,
         listeners: listPhisEntitlementListeners(),
       });
       if (!entry) throw new PhisAddonEntitlementsError(`${addonId} called entitlements.grant for product "${id}", which is not active; a new entry needs an active product.`);
       return written(entry);
     },
 
-    async update({ product, reference, endsAt, quantity, suspended }) {
+    async update({ product, reference, endsAt, quantity, setFlags, clearFlags, subscriptionId }) {
       requireBelievableCaller("update");
       const id = readProductId("update", product);
-      // Whether the entry is bound is the entry's to say; the write refuses an end on a bound one.
+      const set = readFlagBits(setFlags, PhisEntitlementFlag.Suspended, `${addonId} called entitlements.update with setFlags that`);
+      const clear = readFlagBits(clearFlags, PhisEntitlementFlag.Suspended, `${addonId} called entitlements.update with clearFlags that`);
+      if ((set & clear) !== 0) {
+        throw new PhisAddonEntitlementsError(`${addonId} called entitlements.update setting and clearing the same bit.`);
+      }
+      // Only away from a subscription, never onto one.
+      if (subscriptionId !== undefined && subscriptionId !== null) {
+        throw new PhisAddonEntitlementsError(`${addonId} called entitlements.update with a subscriptionId; an entry is only taken off its subscription (null).`);
+      }
+      // Whether the entry is bound is the entry's to say; the write refuses an end on one that stays bound.
       // An entry is changed whatever became of its product; the product is read for its quantity rule only.
       const found = await readProduct(getPool(), siteId, id);
       await requireWritable("update", id, found);
@@ -278,7 +320,8 @@ export function buildPhisAddonEntitlementsCapability(input: {
         siteId, source: addonId, product: id, reference: readReference(reference),
         ...(endsAt !== undefined ? { endsAt: readInstant(endsAt, "endsAt") } : {}),
         ...(quantity !== undefined ? { quantity: readQuantity(quantity, found!) } : {}),
-        ...(suspended !== undefined ? { suspended: suspended === true } : {}),
+        setFlags: set, clearFlags: clear,
+        ...(subscriptionId === null ? { unbind: true } : {}),
         listeners: listPhisEntitlementListeners(),
       }));
     },

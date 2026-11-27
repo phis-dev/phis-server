@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
-import type { PhisPaymentProfileDraft, PhisPaymentProfileSummary, PhisPaymentProviderProbe } from "@phis/contracts/payments";
+import { PhisPaymentFlag, type PhisPaymentProfileDraft, type PhisPaymentProfileFeatures, type PhisPaymentProfileSummary } from "@phis/contracts/payments";
 import { withPoolTransaction } from "../lib/db-transaction.ts";
 import { PHIS_PAYMENT_LEASE_SECONDS } from "../lib/constants/payments.ts";
 import { PhisPaymentError, requirePhisPaymentReference } from "../lib/payments/validation.ts";
 import type {
-  PhisPaymentProfile, PhisPaymentProfileProbeRecord, PhisPaymentReceipt, PhisPaymentScope, PhisStoredPayment, PhisStoredPaymentMethod,
+  PhisPaymentProfile, PhisPaymentReceipt, PhisPaymentScope, PhisStoredPayment, PhisStoredPaymentMethod,
   PhisStoredPaymentOperation, PhisStoredPaymentRefund,
 } from "../lib/payments/types.ts";
 
@@ -14,25 +14,27 @@ type PaymentRow = {
   site_id: number; consumer_addon_id: string; provider_key: string; merchant_identity: string;
   profile_revision: number; currency_exponent: number; binding: PhisStoredPayment["binding"];
   method_features: PhisStoredPayment["features"]; record: PhisStoredPayment["record"]; generation: number; lease_token: string | null; lease_until: Date | null; notified_generation: number | null;
+  document_subject: string | null; document_label: string | null;
 };
+/** `PhisPaymentFlag.ReconciliationRequired` of a payment row's record, in SQL. */
+export const PAYMENT_RECONCILIATION_SQL = (alias: string) => `((COALESCE((${alias}.record->>'flags')::int, 0) & ${PhisPaymentFlag.ReconciliationRequired}) <> 0)`;
 function paymentFromRow(row: PaymentRow): PhisStoredPayment {
   return { siteId: row.site_id, consumerAddonId: row.consumer_addon_id, providerKey: row.provider_key,
     merchantIdentity: row.merchant_identity, profileRevision: row.profile_revision, currencyExponent: row.currency_exponent,
-    // A payment written before stored methods existed was started by a customer and stored nothing.
-    features: row.method_features, binding: row.binding, record: { ...row.record, initiator: row.record.initiator ?? "customer", storedMethodId: row.record.storedMethodId ?? null,
-      subscriptionId: row.record.subscriptionId ?? null, periodIndex: row.record.periodIndex ?? null },
+    features: row.method_features, binding: row.binding, record: row.record,
     generation: Number(row.generation), leaseToken: row.lease_token, leaseUntil: row.lease_until,
-    notifiedGeneration: row.notified_generation === null ? null : Number(row.notified_generation) };
+    notifiedGeneration: row.notified_generation === null ? null : Number(row.notified_generation),
+    documentSubject: row.document_subject, documentLabel: row.document_label };
 }
 
 export async function readPhisPaymentProfile(db: Db, siteId: number, key: string, lock = false): Promise<PhisPaymentProfile | null> {
   const { rows } = await db.query<{
     draft: PhisPaymentProfileDraft; provider_addon_id: string; merchant_identity: string | null;
-    revision: number; enabled: boolean; retired: boolean; probed_at: Date | null; methods: Record<string, PhisPaymentProfileProbeRecord> | null;
+    revision: number; enabled: boolean; retired: boolean; probed_at: Date | null; features: Record<string, PhisPaymentProfileFeatures> | null;
   }>(`SELECT * FROM phis.payment_profiles WHERE site_id = $1 AND key = $2 ${lock ? "FOR SHARE" : ""}`, [siteId, key]);
   const row = rows[0];
   return row ? { ...row.draft, siteId, providerAddonId: row.provider_addon_id, merchantIdentity: row.merchant_identity,
-    revision: row.revision, enabled: row.enabled, retired: row.retired, probedAt: row.probed_at?.toISOString() ?? null, methods: row.methods } : null;
+    revision: row.revision, enabled: row.enabled, retired: row.retired, probedAt: row.probed_at?.toISOString() ?? null, features: row.features } : null;
 }
 
 export async function listPhisPaymentProfiles(db: Db, siteId: number): Promise<PhisPaymentProfile[]> {
@@ -70,7 +72,7 @@ export async function writePhisPaymentProfile(pool: Pool, siteId: number, provid
     await db.query(`INSERT INTO phis.payment_profiles (site_id, key, provider_addon_id, draft)
       VALUES ($1, $2, $3, $4::jsonb)
       ON CONFLICT (site_id, key) DO UPDATE SET draft = EXCLUDED.draft,
-        revision = phis.payment_profiles.revision + 1, enabled = FALSE, probed_at = NULL, methods = NULL`,
+        revision = phis.payment_profiles.revision + 1, enabled = FALSE, probed_at = NULL, features = NULL`,
       [siteId, draft.key, providerAddonId, JSON.stringify(draft)]);
     return (await readPhisPaymentProfile(db, siteId, draft.key))!;
   });
@@ -87,22 +89,23 @@ export async function listActivePhisPaymentProfilesOfProvider(db: Db, providerAd
 }
 
 /**
- * Records what the Provider answered in one currency, beside what it answered in the others, and answers
- * when. `probed_at` is the last time Core asked about the profile in any currency; each currency keeps its
- * own `probedAt`. Not a revision: a payment being created under the profile goes on.
+ * Records what the Provider declared in one currency, per pricing policy, beside what it declared in the
+ * others, and answers the recording as stored. `probed_at` is the last time Core asked about the profile in
+ * any currency; each currency keeps its own `probedAt`. Not a revision: a payment being created under the
+ * profile goes on.
  */
-export async function recordPhisPaymentProfileProbe(db: Db, profile: PhisPaymentProfile, merchantIdentity: string, mode: "test" | "live",
-  currency: string, methods: PhisPaymentProviderProbe["methods"]): Promise<string> {
+export async function recordPhisPaymentProfileFeatures(db: Db, profile: PhisPaymentProfile, merchantIdentity: string, mode: "test" | "live",
+  currency: string, policies: PhisPaymentProfileFeatures["policies"]): Promise<PhisPaymentProfileFeatures> {
   requirePhisPaymentReference(merchantIdentity);
   if (mode !== profile.mode || (profile.merchantIdentity !== null && profile.merchantIdentity !== merchantIdentity)) throw new PhisPaymentError("profile_unavailable");
-  const result = await db.query<{ probed_at: string }>(`UPDATE phis.payment_profiles SET merchant_identity = $4, probed_at = NOW(),
-      methods = COALESCE(methods, '{}'::jsonb) || jsonb_build_object($5::text, jsonb_build_object(
-        'probedAt', to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'methods', $6::jsonb))
+  const result = await db.query<{ recording: PhisPaymentProfileFeatures }>(`UPDATE phis.payment_profiles SET merchant_identity = $4, probed_at = NOW(),
+      features = COALESCE(features, '{}'::jsonb) || jsonb_build_object($5::text, jsonb_build_object('currency', $5::text,
+        'probedAt', to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'policies', $6::jsonb))
     WHERE site_id = $1 AND key = $2 AND revision = $3 AND NOT retired
-    RETURNING methods -> $5::text ->> 'probedAt' AS probed_at`,
-  [profile.siteId, profile.key, profile.revision, merchantIdentity, currency, JSON.stringify(methods)]);
+    RETURNING features -> $5::text AS recording`,
+  [profile.siteId, profile.key, profile.revision, merchantIdentity, currency, JSON.stringify(policies)]);
   if (!result.rowCount) throw new PhisPaymentError("profile_unavailable");
-  return result.rows[0]!.probed_at;
+  return result.rows[0]!.recording;
 }
 
 /**
@@ -171,14 +174,16 @@ export async function findPhisPaymentIdempotency(db: Db, scope: PhisPaymentScope
 
 export async function insertPhisPayment(db: Db, payment: PhisStoredPayment) {
   await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [JSON.stringify(["payment-reference", payment.siteId, payment.consumerAddonId, payment.record.reference])]);
-  const active = await db.query(`SELECT id FROM phis.payments WHERE site_id = $1 AND consumer_addon_id = $2 AND record->>'reference' = $3
-    AND (record->>'status' NOT IN ('failed','expired','canceled') OR (record->>'reconciliationRequired')::boolean) LIMIT 1`,
+  const active = await db.query(`SELECT p.id FROM phis.payments p WHERE p.site_id = $1 AND p.consumer_addon_id = $2 AND p.record->>'reference' = $3
+    AND (p.record->>'status' NOT IN ('failed','expired','canceled') OR ${PAYMENT_RECONCILIATION_SQL("p")}) LIMIT 1`,
     [payment.siteId, payment.consumerAddonId, payment.record.reference]);
   if (active.rowCount) throw new PhisPaymentError("active_attempt_exists");
   await db.query(`INSERT INTO phis.payments (id, site_id, consumer_addon_id, profile_key, provider_key, merchant_identity,
-    profile_revision, currency_exponent, method_features, record) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb)`,
+    profile_revision, currency_exponent, method_features, record, document_subject, document_label)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $12)`,
     [payment.record.id, payment.siteId, payment.consumerAddonId, payment.record.profileKey, payment.providerKey,
-      payment.merchantIdentity, payment.profileRevision, payment.currencyExponent, JSON.stringify(payment.features), JSON.stringify(payment.record)]);
+      payment.merchantIdentity, payment.profileRevision, payment.currencyExponent, JSON.stringify(payment.features), JSON.stringify(payment.record),
+      payment.documentSubject, payment.documentLabel]);
 }
 
 export async function insertPhisPaymentOperation(db: Db, scope: PhisPaymentScope, key: string, operation: PhisStoredPaymentOperation) {
@@ -334,7 +339,7 @@ export async function revokeSupersededPhisPaymentStoredMethods(db: Db, method: P
 export async function listPhisPaymentRecoveryCandidates(db: Db, limit: number) {
   return (await db.query<{ id: string; site_id: number; key: string; consumer_addon_id: string }>(`SELECT p.id, p.site_id, s.key, p.consumer_addon_id
     FROM phis.payments p JOIN phis.sites s ON s.id = p.site_id
-    WHERE (p.record->>'reconciliationRequired')::boolean
+    WHERE ${PAYMENT_RECONCILIATION_SQL("p")}
       -- A notification that met a held payment and was not yet followed by an observation of its own.
       OR (p.notified_generation IS NOT NULL AND p.binding IS NOT NULL) OR EXISTS (
       SELECT 1 FROM phis.payment_operations o WHERE o.payment_id = p.id AND o.record->>'state' IN ('reserved','pending','indeterminate'))

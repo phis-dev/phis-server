@@ -19,7 +19,6 @@ CREATE TABLE IF NOT EXISTS phis.sites (
   time_zone VARCHAR(64) NOT NULL DEFAULT 'UTC',
   -- How many whole days an entitlement bound to a subscription goes on counting after its paid period, as
   -- long as the subscription has not ended (entitlements:v1). 0 ends it with the period.
-  entitlement_grace_days SMALLINT NOT NULL DEFAULT 14 CHECK (entitlement_grace_days BETWEEN 0 AND 14),
   -- How many whole days the Site keeps its users:v1 access log (`users_access_log`): every answer that
   -- carried a person's data to an Add-on. The Core job `users-access-log.prune` drops older rows.
   users_access_log_days SMALLINT NOT NULL DEFAULT 90 CHECK (users_access_log_days BETWEEN 1 AND 3650),
@@ -2627,7 +2626,9 @@ CREATE TABLE IF NOT EXISTS phis.payment_profiles (
   enabled BOOLEAN NOT NULL DEFAULT FALSE,
   retired BOOLEAN NOT NULL DEFAULT FALSE,
   probed_at TIMESTAMPTZ NULL,
-  methods JSONB NULL,
+  -- What the Provider declared when Core last asked, per uppercase currency code and per pricing policy
+  -- (`PhisPaymentProfileFeatures`); NULL until the first probe.
+  features JSONB NULL,
   PRIMARY KEY (site_id, key),
   CHECK (key ~ '^[a-z0-9][a-z0-9._-]{0,63}$'),
   CHECK (NOT enabled OR (merchant_identity IS NOT NULL AND probed_at IS NOT NULL AND NOT retired))
@@ -2651,6 +2652,10 @@ CREATE TABLE IF NOT EXISTS phis.payments (
   -- A verified notification arrived while another call held the lease: the generation it met. Cleared by the
   -- reconciliation that claimed after it and asked the Provider; until then the maintenance run selects the payment.
   notified_generation SMALLINT NULL,
+  -- Whose documents this payment's are (`billing:v1`): the buyer's entitlement subject, and the list line of
+  -- its documents; NULL for a guest's and for the payment's description. Core's own, never in `record`.
+  document_subject VARCHAR(255) NULL,
+  document_label VARCHAR(200) NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   FOREIGN KEY (site_id, profile_key) REFERENCES phis.payment_profiles(site_id, key) ON DELETE RESTRICT,
@@ -2668,7 +2673,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS payments_remote_binding_idx
   ON phis.payments (site_id, profile_key, (binding->>'reference')) WHERE binding IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS payments_active_reference_idx
   ON phis.payments (site_id, consumer_addon_id, (record->>'reference'))
-  WHERE record->>'status' NOT IN ('failed','expired','canceled') OR (record->>'reconciliationRequired')::boolean;
+  WHERE record->>'status' NOT IN ('failed','expired','canceled') OR ((record->>'flags')::int & 1) <> 0;
 
 -- A payment method a Provider holds for a payer (PAYMENTS.md, stored methods). Core keeps the Provider's
 -- opaque binding and the record a consumer reads; payment details never reach this database. The
@@ -2747,10 +2752,11 @@ CREATE TABLE IF NOT EXISTS phis.payment_notification_receipts (
   FOREIGN KEY (site_id, profile_key) REFERENCES phis.payment_profiles(site_id, key) ON DELETE RESTRICT
 );
 
--- An agreement Core charges on a schedule of its own (PAYMENTS.md, subscriptions). `record` is what a
--- consumer reads. `anchor_at` is the start of the first period, from which every later boundary is
--- computed; `next_charge_at` mirrors the record for the scheduler's index; the lease keeps two scheduler
--- runs from working on one subscription at a time.
+-- An agreement Core keeps the schedule of (PAYMENTS.md, subscriptions). `record` is what a consumer reads.
+-- `anchor_at` is the start of the current term and `term_first_index` the index of its first period, from
+-- which every later boundary is computed (the record's `term`, mirrored); `next_charge_at` mirrors the
+-- record for the scheduler's index; the lease keeps two scheduler runs from working on one subscription
+-- at a time.
 CREATE TABLE IF NOT EXISTS phis.payment_subscriptions (
   id UUID PRIMARY KEY,
   site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE RESTRICT,
@@ -2760,6 +2766,7 @@ CREATE TABLE IF NOT EXISTS phis.payment_subscriptions (
   request JSONB NOT NULL,
   record JSONB NOT NULL,
   anchor_at TIMESTAMPTZ NULL,
+  term_first_index INT NOT NULL DEFAULT 0 CHECK (term_first_index >= 0),
   next_charge_at TIMESTAMPTZ NULL,
   lease_token UUID NULL,
   lease_until TIMESTAMPTZ NULL,
@@ -2768,7 +2775,9 @@ CREATE TABLE IF NOT EXISTS phis.payment_subscriptions (
   FOREIGN KEY (site_id, profile_key) REFERENCES phis.payment_profiles(site_id, key) ON DELETE RESTRICT,
   UNIQUE (site_id, consumer_addon_id, idempotency_key),
   CHECK (record->>'id' = id::text),
-  CHECK (record->>'status' IN ('pending','active','past_due','unpaid','canceled')),
+  CHECK (record->>'status' IN ('pending','active','past_due','canceled')),
+  CONSTRAINT payment_subscriptions_collection_check CHECK (record->'collection'->>'mode' IN ('automatic','payment-request')),
+  CONSTRAINT payment_subscriptions_grace_check CHECK ((record->>'graceDays')::int BETWEEN 0 AND 30),
   CHECK ((lease_token IS NULL) = (lease_until IS NULL))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS payment_subscriptions_live_reference_idx
@@ -2784,11 +2793,91 @@ CREATE TABLE IF NOT EXISTS phis.payment_subscription_periods (
   period_index INT NOT NULL CHECK (period_index >= 0),
   -- How many charges the schedule has made for this period; what the dunning policy counts.
   attempts SMALLINT NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  -- Under `payment-request`, the moments of the requested period already said, each once:
+  -- 1 = requested, 2 = reminder, 4 = due, 8 = grace-ending.
+  moments SMALLINT NOT NULL DEFAULT 0 CHECK (moments BETWEEN 0 AND 15),
   record JSONB NOT NULL,
   PRIMARY KEY (subscription_id, period_index),
   CHECK ((record->>'index')::int = period_index),
   CHECK (record->>'status' IN ('open','paid','failed','void'))
 );
+
+-- A change of a subscription's terms (PAYMENTS.md, changes). `record` is what a consumer reads; the request
+-- is kept for idempotency. At most one change of a subscription is pending (`scheduled` or
+-- `awaiting_payment`); `payment_id` is the payment of its `due`, linked in that payment's own transaction.
+CREATE TABLE IF NOT EXISTS phis.payment_subscription_changes (
+  id UUID PRIMARY KEY,
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE RESTRICT,
+  consumer_addon_id VARCHAR(255) NOT NULL REFERENCES phis.server_addons(addon_id) ON DELETE RESTRICT,
+  subscription_id UUID NOT NULL REFERENCES phis.payment_subscriptions(id) ON DELETE RESTRICT,
+  reference VARCHAR(40) NOT NULL,
+  idempotency_key VARCHAR(255) NOT NULL,
+  payment_id UUID NULL UNIQUE REFERENCES phis.payments(id) ON DELETE RESTRICT,
+  request JSONB NOT NULL,
+  record JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (subscription_id, reference),
+  UNIQUE (site_id, consumer_addon_id, idempotency_key),
+  CHECK (record->>'id' = id::text),
+  CHECK (record->>'status' IN ('scheduled','awaiting_payment','applied','void')),
+  CHECK (record->>'timing' IN ('now','period-end'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS payment_subscription_changes_pending_idx
+  ON phis.payment_subscription_changes (subscription_id) WHERE record->>'status' IN ('scheduled','awaiting_payment');
+
+-- What Core still collects from a Provider after a capture or a succeeded refund (PAYMENTS.md, records):
+-- one task per payment, refund (NULL: the capture) and kind, written with the fact and done by the Core job
+-- `payments.records.collect`. Retried after 5 and 15 minutes, 1 and 6 hours, then daily, for 14 days from
+-- `created_at`; then `failed`. An attempt the Provider could not be reached for is not counted.
+CREATE TABLE IF NOT EXISTS phis.payment_record_tasks (
+  id BIGSERIAL PRIMARY KEY,
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  payment_id UUID NOT NULL REFERENCES phis.payments(id) ON DELETE CASCADE,
+  refund_id UUID NULL REFERENCES phis.payment_refunds(id) ON DELETE CASCADE,
+  kind VARCHAR(16) NOT NULL CHECK (kind IN ('documents','settlements')),
+  state VARCHAR(8) NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','done','failed')),
+  attempts SMALLINT NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_error TEXT NULL,
+  lease_token UUID NULL,
+  lease_until TIMESTAMPTZ NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT payment_record_tasks_unique UNIQUE NULLS NOT DISTINCT (payment_id, refund_id, kind),
+  CHECK ((lease_token IS NULL) = (lease_until IS NULL))
+);
+CREATE INDEX IF NOT EXISTS payment_record_tasks_due_idx
+  ON phis.payment_record_tasks (next_attempt_at) WHERE state = 'pending';
+
+-- What one capture or refund moved on the merchant's balance at the Provider (`payments:v1`
+-- `listSettlements`), recorded by Core and never rewritten: a later correction is a further record. The
+-- four settlement amounts share `settled_currency`; `exchange_rate` is the Provider's string, never used in
+-- arithmetic.
+CREATE TABLE IF NOT EXISTS phis.payment_settlements (
+  id UUID PRIMARY KEY,
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE RESTRICT,
+  profile_key VARCHAR(64) NOT NULL,
+  payment_id UUID NOT NULL REFERENCES phis.payments(id) ON DELETE RESTRICT,
+  refund_id UUID NULL REFERENCES phis.payment_refunds(id) ON DELETE RESTRICT,
+  direction VARCHAR(6) NOT NULL CHECK (direction IN ('credit','debit')),
+  provider_reference VARCHAR(255) NOT NULL,
+  gross_currency CHAR(3) NOT NULL,
+  gross_minor BIGINT NOT NULL CHECK (gross_minor >= 0),
+  settled_currency CHAR(3) NOT NULL,
+  settled_minor BIGINT NOT NULL CHECK (settled_minor >= 0),
+  fee_minor BIGINT NOT NULL CHECK (fee_minor >= 0),
+  withheld_tax_minor BIGINT NULL CHECK (withheld_tax_minor >= 0),
+  net_minor BIGINT NOT NULL CHECK (net_minor >= 0),
+  exchange_rate NUMERIC(20,10) NULL CHECK (exchange_rate > 0),
+  available_at TIMESTAMPTZ NULL,
+  booked_at TIMESTAMPTZ NOT NULL,
+  recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  FOREIGN KEY (site_id, profile_key) REFERENCES phis.payment_profiles(site_id, key) ON DELETE RESTRICT,
+  UNIQUE (site_id, profile_key, provider_reference),
+  CHECK (net_minor = settled_minor - fee_minor - COALESCE(withheld_tax_minor, 0))
+);
+CREATE INDEX IF NOT EXISTS payment_settlements_payment_idx ON phis.payment_settlements (payment_id, booked_at);
 
 CREATE TABLE IF NOT EXISTS phis.addon_event_outbox (
   id BIGSERIAL PRIMARY KEY,
@@ -3006,8 +3095,8 @@ CREATE TABLE IF NOT EXISTS phis.entitlements (
   quantity INT NULL,
   flags INT NOT NULL DEFAULT 0,
   -- The subscription of payments:v1 the entry follows, or NULL. A bound entry has no written end: it counts
-  -- while the subscription's latest paid period lasts and, until the subscription ends, for the Site's grace
-  -- days after it, derived on every read.
+  -- while the subscription's latest paid period lasts and, until the subscription ends, for the subscription's
+  -- `graceDays` after it, derived on every read.
   subscription_id UUID NULL REFERENCES phis.payment_subscriptions(id) ON DELETE RESTRICT,
   ended_event_at TIMESTAMPTZ NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

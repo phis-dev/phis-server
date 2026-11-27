@@ -21,6 +21,9 @@ import { getSiteIdentityById } from "@/db/sites";
 import { logRuntimeEvent } from "@/lib/log";
 import { isPhisUserField } from "@/lib/constants/users";
 
+
+/** The moments of a requested period a subscription fact may name (`payment.changed`). */
+const SUBSCRIPTION_MOMENTS = ["requested", "reminder", "due", "grace-ending"] as const;
 /**
  * Handing an Add-on what Core owes it.
  *
@@ -78,6 +81,8 @@ async function invokeEventHandler(input: {
         kind: "subscription", subscriptionId: input.row.subscriptionId, reference: input.row.payload.reference,
         version: input.row.payload.version as number,
         periodIndex: Number.isInteger(input.row.payload.periodIndex) ? input.row.payload.periodIndex as number : null,
+        changeId: typeof input.row.payload.changeId === "string" ? input.row.payload.changeId : null,
+        moment: SUBSCRIPTION_MOMENTS.find(moment => moment === input.row.payload.moment) ?? null,
       } }));
     } else if (input.event === "payment.changed") {
       if (input.row.subjectKind !== "payment" || !input.row.paymentId

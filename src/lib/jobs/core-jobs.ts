@@ -28,7 +28,8 @@ import { getPool } from "@/lib/db";
 import { prunePhisCdnUploads } from "@/lib/cdn-publish.mts";
 import { openPhisCdnTarget } from "@/lib/cdn-server";
 import { drainPhiNotifications } from "@/lib/notifications/deliver";
-import { reconcileUnresolvedPhisPayments, runDuePhisPaymentSubscriptions } from "@/lib/payments/runtime";
+import { collectDuePhisPaymentRecords, reconcileUnresolvedPhisPayments, runDuePhisPaymentSubscriptions } from "@/lib/payments/runtime";
+
 import { isPhiJobStepSubHourly } from "./slots";
 
 /**
@@ -100,6 +101,15 @@ export const PHI_CORE_JOBS: readonly PhiCoreJob[] = Object.freeze([
        * instead of holding one for as long as every Provider takes to answer.
        */
       await runDuePhisPaymentSubscriptions(100, signal);
+    },
+  },
+  {
+    id: "payments.records.collect",
+    schedule: { every: "5m" },
+    summary: "Collects what Providers settled for captured payments and refunds, retrying what is not there yet for 14 days.",
+    async run(signal: AbortSignal) {
+      // Bounded per run (PHIS_PAYMENT_RECORDS_BATCH); what is left is offered again in five minutes.
+      await collectDuePhisPaymentRecords(signal);
     },
   },
   {

@@ -1,20 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { PhisEntitlementEntryName } from "@phis/contracts/entitlements";
 
 vi.mock("server-only", () => ({}));
 
-type Held = { id: string; counted: boolean; free: boolean; state: string };
+type Held = { id: string; flags: number; state: string };
 
 const state = vi.hoisted(() => ({
   deliver: vi.fn(),
-  installed: {} as Record<string, { enabled: boolean; manifest: { eventHandlers?: { event: string }[] } }>,
+  installed: {} as Record<string, { flags: number; manifest: { eventHandlers?: { event: string }[] } }>,
   ensureSubject: vi.fn(async () => "sub_actor"),
   findSubject: vi.fn(async (): Promise<{ id: number; userId: number } | null> => ({ id: 5, userId: 9 })),
   grant: vi.fn(async (input: Record<string, unknown>): Promise<unknown> => ({ ...input, id: 1 })),
   update: vi.fn(async (input: Record<string, unknown>): Promise<unknown> => ({ ...input, id: 1 })),
   list: vi.fn(async (_input: Record<string, unknown>): Promise<unknown[]> => []),
-  readState: vi.fn(async (input: Record<string, unknown>) => ({ product: input.product, entitled: input.subjectId !== null, quantity: null, until: null, via: [] })),
+  listNamed: vi.fn(async (input: { entries: unknown[] }): Promise<unknown[]> => input.entries.map(() => null)),
+  readState: vi.fn(async (input: Record<string, unknown>) => ({ product: input.product, flags: input.subjectId !== null ? 1 : 0, quantity: null, until: null, via: [] })),
   readStates: vi.fn(async (input: { subjectId: number | null; products: string[] }) =>
-    input.products.map((product) => ({ product, entitled: input.subjectId !== null, quantity: null, until: null, via: [] }))),
+    input.products.map((product) => ({ product, flags: input.subjectId !== null ? 1 : 0, quantity: null, until: null, via: [] }))),
   memberSubject: vi.fn(async (): Promise<string | null> => "sub_member"),
   redeliver: vi.fn(async (_input: Record<string, unknown>) => 3),
   siteAccess: vi.fn((_access: string) => false),
@@ -31,6 +33,7 @@ vi.mock("@/db/entitlements.mts", () => ({
   grantEntitlement: (_pool: unknown, input: Record<string, unknown>) => state.grant(input),
   updateEntitlement: (_pool: unknown, input: Record<string, unknown>) => state.update(input),
   listEntitlements: (_pool: unknown, input: Record<string, unknown>) => state.list(input),
+  listNamedEntitlements: (_pool: unknown, input: { entries: unknown[] }) => state.listNamed(input),
   readEntitlementState: (_pool: unknown, input: Record<string, unknown>) => state.readState(input),
   readEntitlementStates: (_pool: unknown, input: { subjectId: number | null; products: string[] }) => state.readStates(input),
   redeliverEntitlementChanged: (_pool: unknown, input: Record<string, unknown>) => state.redeliver(input),
@@ -46,9 +49,9 @@ const LICENSE = "@acme/licenses:pro";
 const SEATS = "@acme/licenses:seats";
 const SHOP = "@acme/shop";
 const heldProducts: Record<string, Held> = {
-  [LICENSE]: { id: LICENSE, counted: false, free: false, state: "active" },
-  [SEATS]: { id: SEATS, counted: true, free: false, state: "active" },
-  "@acme/licenses:gratis": { id: "@acme/licenses:gratis", counted: false, free: true, state: "active" },
+  [LICENSE]: { id: LICENSE, flags: 0, state: "active" },
+  [SEATS]: { id: SEATS, flags: 1, state: "active" },
+  "@acme/licenses:gratis": { id: "@acme/licenses:gratis", flags: 4, state: "active" },
 };
 
 function capability(overrides: Partial<Parameters<typeof buildPhisAddonEntitlementsCapability>[0]> = {}) {
@@ -60,10 +63,10 @@ function capability(overrides: Partial<Parameters<typeof buildPhisAddonEntitleme
 describe("entitlements capability", () => {
   beforeEach(() => {
     state.installed = {
-      "@acme/licenses": { enabled: true, manifest: { eventHandlers: [{ event: "entitlement.changed" }] } },
-      "@acme/shop": { enabled: true, manifest: {} },
-      "@acme/off": { enabled: false, manifest: { eventHandlers: [{ event: "entitlement.changed" }] } },
-      "@acme/showcase": { enabled: true, manifest: { eventHandlers: [{ event: "product.changed" }] } },
+      "@acme/licenses": { flags: 1, manifest: { eventHandlers: [{ event: "entitlement.changed" }] } },
+      "@acme/shop": { flags: 1, manifest: {} },
+      "@acme/off": { flags: 0, manifest: { eventHandlers: [{ event: "entitlement.changed" }] } },
+      "@acme/showcase": { flags: 1, manifest: { eventHandlers: [{ event: "product.changed" }] } },
     };
     state.allowed.mockResolvedValue(false);
     state.ownSubscription.mockResolvedValue(true);
@@ -232,7 +235,7 @@ describe("entitlements capability", () => {
 
     it("writes one entry for a bundle and resolves nothing", async () => {
       state.allowed.mockResolvedValue(true);
-      state.product.mockResolvedValueOnce({ id: "@acme/licenses:bundle", counted: false, free: false, state: "active", parts: [LICENSE, SEATS] } as never);
+      state.product.mockResolvedValueOnce({ id: "@acme/licenses:bundle", flags: 0, state: "active", parts: [LICENSE, SEATS] } as never);
       await capability().grant({ subject: "sub_x", product: "@acme/licenses:bundle", reference: "o1" });
       expect(state.grant).toHaveBeenCalledTimes(1);
     });
@@ -273,32 +276,84 @@ describe("entitlements capability", () => {
     });
 
     it("update is refused without leave", async () => {
-      await expect(capability().update({ product: LICENSE, reference: "o1", suspended: true })).rejects.toThrow(/may not write/);
+      await expect(capability().update({ product: LICENSE, reference: "o1", setFlags: 2 })).rejects.toThrow(/may not write/);
       expect(state.update).not.toHaveBeenCalled();
     });
 
     it("update goes through whatever the product's state, and passes only what was stated", async () => {
       state.allowed.mockResolvedValue(true);
-      state.product.mockResolvedValueOnce({ id: LICENSE, counted: false, free: false, state: "withdrawn" });
+      state.product.mockResolvedValueOnce({ id: LICENSE, flags: 0, state: "withdrawn" });
       await capability().update({ product: LICENSE, reference: "o1", endsAt: null });
       const input = state.update.mock.calls[0]![0]!;
       expect(input).toMatchObject({ source: SHOP, endsAt: null });
       expect("quantity" in input).toBe(false);
-      expect("suspended" in input).toBe(false);
+      expect(input).toMatchObject({ setFlags: 0, clearFlags: 0 });
+      expect("unbind" in input).toBe(false);
     });
 
     it("update of an entry whose product is gone works for the allowed source, except a quantity", async () => {
       state.allowed.mockResolvedValue(true);
-      await capability().update({ product: "@acme/licenses:gone", reference: "o1", suspended: true });
+      await capability().update({ product: "@acme/licenses:gone", reference: "o1", setFlags: 2 });
       expect(state.update).toHaveBeenCalledTimes(1);
       await expect(capability().update({ product: "@acme/licenses:gone", reference: "o1", quantity: 2 })).rejects.toThrow(/no longer has/);
+    });
+  });
+
+  describe("update's flags and unbinding", () => {
+    beforeEach(() => { state.allowed.mockResolvedValue(true); state.update.mockClear(); });
+
+    it("passes Suspended to set or clear, and refuses any other bit or both at once", async () => {
+      await capability().update({ product: LICENSE, reference: "o1", setFlags: 2 });
+      expect(state.update).toHaveBeenLastCalledWith(expect.objectContaining({ setFlags: 2, clearFlags: 0 }));
+      await capability().update({ product: LICENSE, reference: "o1", clearFlags: 2 });
+      expect(state.update).toHaveBeenLastCalledWith(expect.objectContaining({ setFlags: 0, clearFlags: 2 }));
+      for (const bad of [{ setFlags: 1 }, { clearFlags: 1 }, { setFlags: 2, clearFlags: 2 }, { setFlags: true }]) {
+        await expect(capability().update({ product: LICENSE, reference: "o1", ...bad } as never)).rejects.toThrow();
+      }
+      expect(state.update).toHaveBeenCalledTimes(2);
+    });
+
+    it("unbinds with subscriptionId null, and refuses binding onto a subscription", async () => {
+      await capability().update({ product: LICENSE, reference: "S1", subscriptionId: null });
+      expect(state.update).toHaveBeenLastCalledWith(expect.objectContaining({ unbind: true }));
+      await capability().update({ product: LICENSE, reference: "S1", subscriptionId: null, endsAt: "2030-01-01T00:00:00Z" });
+      expect(state.update).toHaveBeenLastCalledWith(expect.objectContaining({ unbind: true, endsAt: "2030-01-01T00:00:00.000Z" }));
+      await expect(capability().update({ product: LICENSE, reference: "S1", subscriptionId: "sub-1" as never })).rejects.toThrow(/only taken off/);
+    });
+  });
+
+  describe("listNamed", () => {
+    beforeEach(() => { state.listNamed.mockClear(); state.ensureSubject.mockClear(); });
+
+    it("reads every name in one call, the acting person's subject where a name gives none", async () => {
+      const entries = [{ source: SHOP, reference: "S1", product: LICENSE }, { source: SHOP, reference: "S2", product: SEATS, subject: "sub_other" }] as PhisEntitlementEntryName[];
+      expect(await capability().listNamed({ entries })).toEqual([null, null]);
+      expect(state.listNamed).toHaveBeenCalledOnce();
+      expect(state.listNamed).toHaveBeenCalledWith({ siteId: 7, entries: [{ ...entries[0], subject: undefined }, entries[1]], fallbackSubject: "sub_actor" });
+    });
+
+    it("asks no subject when every name gives one, and nobody's without an acting person", async () => {
+      await capability().listNamed({ entries: [{ source: SHOP, reference: "S1", product: LICENSE, subject: "sub_x" }] });
+      expect(state.ensureSubject).not.toHaveBeenCalled();
+      await capability({ actorUserId: null }).listNamed({ entries: [{ source: SHOP, reference: "S1", product: LICENSE }] });
+      expect(state.listNamed).toHaveBeenLastCalledWith(expect.objectContaining({ fallbackSubject: null }));
+    });
+
+    it("answers none for none and refuses more than 100 names or one that is not a name", async () => {
+      expect(await capability().listNamed({ entries: [] })).toEqual([]);
+      expect(state.listNamed).not.toHaveBeenCalled();
+      const many = Array.from({ length: 101 }, (_, i) => ({ source: SHOP, reference: `S${i}`, product: LICENSE })) as PhisEntitlementEntryName[];
+      await expect(capability().listNamed({ entries: many })).rejects.toThrow(/at most 100/);
+      await expect(capability().listNamed({ entries: [{ source: SHOP, reference: "S1", product: "nope" as never }] })).rejects.toThrow(/not a product id/);
+      await expect(capability().listNamed({ entries: [{ source: 5, reference: "S1", product: LICENSE } as never] })).rejects.toThrow(/not \{ source/);
+      await expect(capability({ unauthenticated: true }).listNamed({ entries: [] })).rejects.toThrow(/unverified hook/);
     });
   });
 
   describe("check", () => {
     it("answers not entitled for something that is no product id without reading entries", async () => {
       const answer = await capability().check({ product: "nonsense" as never });
-      expect(answer).toEqual({ product: "nonsense", entitled: false, quantity: null, until: null, via: [] });
+      expect(answer).toEqual({ product: "nonsense", flags: 0, quantity: null, until: null, via: [] });
       expect(state.readState).toHaveBeenCalledWith(expect.objectContaining({ subjectId: null }));
       expect(state.findSubject).not.toHaveBeenCalled();
       expect(state.ensureSubject).not.toHaveBeenCalled();
@@ -311,20 +366,20 @@ describe("entitlements capability", () => {
   });
 
   describe("list", () => {
-    it("passes resolveBundles through, and false where it is left out", async () => {
-      await capability().list({ product: LICENSE, resolveBundles: true });
+    it("reads ResolveBundles from flags, and false where they are left out", async () => {
+      await capability().list({ product: LICENSE, flags: 1 });
       expect(state.list).toHaveBeenLastCalledWith({ siteId: 7, subjectId: 5, product: LICENSE, resolveBundles: true });
       await capability().list({ product: LICENSE });
       expect(state.list).toHaveBeenLastCalledWith({ siteId: 7, subjectId: 5, product: LICENSE, resolveBundles: false });
-      await capability().list({ product: LICENSE, resolveBundles: false });
+      await capability().list({ product: LICENSE, flags: 0 });
       expect(state.list).toHaveBeenLastCalledWith({ siteId: 7, subjectId: 5, product: LICENSE, resolveBundles: false });
     });
 
-    it("refuses a resolveBundles that is not a boolean, before reading anything", async () => {
+    it("refuses flags with an unknown bit or not a number, before reading anything", async () => {
       state.list.mockClear();
       state.findSubject.mockClear();
-      for (const value of ["true", 1, null, {}]) {
-        await expect(capability().list({ product: LICENSE, resolveBundles: value as never })).rejects.toThrow(/resolveBundles that is not a boolean/);
+      for (const value of [true, "1", 2, -1, 1.5, null]) {
+        await expect(capability().list({ product: LICENSE, flags: value as never })).rejects.toThrow(/not accepted/);
       }
       expect(state.list).not.toHaveBeenCalled();
       expect(state.findSubject).not.toHaveBeenCalled();

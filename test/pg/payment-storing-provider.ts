@@ -1,14 +1,20 @@
 import { randomUUID } from "node:crypto";
 import type {
   PhisPaymentFeatures, PhisPaymentProviderCommand, PhisPaymentProviderExecution, PhisPaymentProviderObservation,
-  PhisPaymentProviderStoredMethod, PhisPaymentProviderV1,
+  PhisPaymentProviderSettlement, PhisPaymentProviderStoredMethod, PhisPaymentProviderV1,
 } from "@phis/contracts/payments";
+import { TEST_CURRENCY_FEATURES, TEST_EVERY_INTERVAL, testPricingFeatures } from "../payment-features.ts";
 
-const PRICING = { bases: ["final", "net"] as const, tax: ["none", "provider"] as const, maxDiscounts: 1, promotionCodes: "alone" as const, collectsCustomerDetails: true, collectsTaxIds: false, merchantOfRecord: null };
+const PRICING = testPricingFeatures({ bases: ["final", "net"], tax: ["none", "provider"], maxDiscounts: 1, promotionCodes: "alone", collectsCustomerDetails: true });
 /** What a charge without a checkout can carry here: a final price, and nothing a hosted page would have to ask. */
-const STORED_PRICING = { bases: ["final"] as const, tax: ["none"] as const, maxDiscounts: 0, promotionCodes: "none" as const, collectsCustomerDetails: false, collectsTaxIds: false, merchantOfRecord: null };
-function features(stored: PhisPaymentFeatures["stored"]): PhisPaymentFeatures {
-  return { captureModes: ["automatic"], checkoutKinds: ["redirect"], canPartialCapture: false, canCancel: true, canRefund: true, canPartialRefund: true, pricing: PRICING, stored };
+const STORED_PRICING = testPricingFeatures();
+/**
+ * A stored method collects `automatic` and on request; one that cannot be stored collects on request only
+ * (`payment-request`). `currency` is set by the test where it wants settlements or documents.
+ */
+function features(stored: PhisPaymentFeatures["stored"], currency = TEST_CURRENCY_FEATURES): PhisPaymentFeatures {
+  return { captureModes: ["automatic"], checkoutKinds: ["redirect"], flags: 14, pricing: PRICING, stored, currency,
+    collection: { automatic: stored ? TEST_EVERY_INTERVAL : null, paymentRequest: TEST_EVERY_INTERVAL, providerManaged: null } };
 }
 
 export type ChargeAnswer = "paid" | "declined" | "customer" | "gone" | "pending" | "unknown" | "awaiting";
@@ -26,6 +32,11 @@ export class StoringProvider implements PhisPaymentProviderV1 {
   charges: PhisPaymentProviderCommand[] = [];
   revoked: string[] = [];
   next: ChargeAnswer = "paid";
+  /** What every method declares of currencies and settlements; a test that wants settlement records sets the flag. */
+  currency = TEST_CURRENCY_FEATURES;
+  /** What `observeSettlements` answers per payment id; nothing booked yet where a payment has no entry. */
+  settlements = new Map<string, { records: PhisPaymentProviderSettlement[]; state: "complete" | "partial" }>();
+  settlementCalls = 0;
   revokeOutcome: "revoked" | "unknown" = "revoked";
   /** Hosted pages for a set-up without payment, by the binding reference Core was given for each. */
   setups = new Map<string, { state: "open" | "expired"; method: PhisPaymentProviderStoredMethod | null }>();
@@ -34,16 +45,17 @@ export class StoringProvider implements PhisPaymentProviderV1 {
   async probe(input: Parameters<PhisPaymentProviderV1["probe"]>[0]) {
     this.probes.push(input.usage);
     const all = [
-      { methodKey: "card", title: "Test card", features: features({ setup: ["with-payment", "alone"], chargeResult: "notified", expires: true, perPayer: "many", pricing: STORED_PRICING }) },
-      { methodKey: "wallet", title: "Test wallet", features: features({ setup: ["with-payment"], chargeResult: "immediate", expires: false, perPayer: "single", pricing: STORED_PRICING }) },
-      { methodKey: "invoice", title: "Test invoice", features: features(null) },
+      { methodKey: "card", title: "Test card", features: features({ setup: ["with-payment", "alone"], chargeResult: "notified", flags: 1, perPayer: "many", pricing: STORED_PRICING }, this.currency) },
+      { methodKey: "wallet", title: "Test wallet", features: features({ setup: ["with-payment"], chargeResult: "immediate", flags: 0, perPayer: "single", pricing: STORED_PRICING }, this.currency) },
+      { methodKey: "invoice", title: "Test invoice", features: features(null, this.currency) },
     ];
-    return { merchantIdentity: "acct_stored", mode: "test" as const, methods: input.usage === "recurring" ? all.filter(method => method.features.stored) : all };
+    // Every method here collects in some mode, so the recurring answer is all of them.
+    return { merchantIdentity: "acct_stored", mode: "test" as const, methods: all };
   }
   private observation(command: { paymentId: string; amount: { currency: string; minor: string } }, status: PhisPaymentProviderObservation["status"]): PhisPaymentProviderObservation {
     return { binding: { reference: `remote-${command.paymentId}`, data: { id: command.paymentId } }, merchantIdentity: "acct_stored", mode: "test", status,
       amount: command.amount, authorizedMinor: "0", capturedMinor: status === "captured" ? command.amount.minor : "0", authorizationExpiresAt: null,
-      totals: { total: command.amount, additions: [], customer: null },
+      totals: { total: command.amount, additions: [], customer: null, presentment: null },
       checkout: status === "awaiting_customer" ? { kind: "redirect", url: "https://provider.example/checkout", expiresAt: null } : null, refunds: [] };
   }
   async execute(command: PhisPaymentProviderCommand): Promise<PhisPaymentProviderExecution> {
@@ -80,6 +92,10 @@ export class StoringProvider implements PhisPaymentProviderV1 {
         display: { title: "Visa", hint: "ends 4242" }, status: "active", expiresAt: "2031-01-31T23:59:59.000Z", ...method };
       state.storedMethod = stored; this.methods.set(stored.binding.reference, stored);
     }
+  }
+  async observeSettlements({ binding }: { binding: { data: Readonly<Record<string, string>> } }) {
+    this.settlementCalls += 1;
+    return structuredClone(this.settlements.get(binding.data.id!) ?? { records: [], state: "partial" as const });
   }
   async observe({ binding }: Parameters<PhisPaymentProviderV1["observe"]>[0]) { return structuredClone(this.states.get(binding.data.id!)!); }
   async recover({ command }: Parameters<PhisPaymentProviderV1["recover"]>[0]): Promise<PhisPaymentProviderExecution> {

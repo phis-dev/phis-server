@@ -437,7 +437,7 @@ Usage:
                 --source-locale <locale> --default-locale <locale> [--available-locales <csv>]
                 --support-email|-e <email> [--time-zone <iana zone>]
   phis site set --key|-k <site key> [--name|-n <site name>] [--hostname|-h <hostname>] [--public-base-url|-u <url>] [--support-email|-e <email>] [--time-zone <iana zone>]
-                 [--entitlement-grace-days <0-14>] [--users-access-log-days <1-3650>]
+                 [--users-access-log-days <1-3650>]
   phis site enable --key|-k <site key>
   phis site disable --key|-k <site key>
   phis site del --key|-k <site key>
@@ -2587,7 +2587,7 @@ async function printSites(flags: FlagMap, json: boolean) {
 
   for (const site of sites) {
     console.log(
-      `${site.key}  enabled=${site.enabled ? "true" : "false"}  hostname=${site.hostname}  entitlement-grace-days=${site.entitlementGraceDays}  users-access-log-days=${site.usersAccessLogDays}  name=${site.name}`,
+      `${site.key}  enabled=${site.enabled ? "true" : "false"}  hostname=${site.hostname}  users-access-log-days=${site.usersAccessLogDays}  name=${site.name}`,
     );
   }
 }
@@ -2690,21 +2690,15 @@ async function updateSiteFields(flags: FlagMap, json: boolean) {
 
   const timeZone = readTimeZoneFlag(flags);
 
-  const graceFlag = getOptionalFlag(flags, "entitlement-grace-days");
-  if (graceFlag !== undefined && (!/^\d{1,2}$/.test(graceFlag) || Number(graceFlag) > 14)) {
-    throw new Error("--entitlement-grace-days is a whole number of days from 0 to 14.");
-  }
-  const entitlementGraceDays = graceFlag === undefined ? undefined : Number(graceFlag);
-
   const accessLogFlag = getOptionalFlag(flags, "users-access-log-days");
   if (accessLogFlag !== undefined && (!/^\d{1,4}$/.test(accessLogFlag) || Number(accessLogFlag) < 1 || Number(accessLogFlag) > PHIS_USERS_ACCESS_LOG_MAX_DAYS)) {
     throw new Error(`--users-access-log-days is a whole number of days from 1 to ${PHIS_USERS_ACCESS_LOG_MAX_DAYS}.`);
   }
   const usersAccessLogDays = accessLogFlag === undefined ? undefined : Number(accessLogFlag);
 
-  if (!name && !supportEmail && !hostname && !publicBaseUrl && !timeZone && entitlementGraceDays === undefined && usersAccessLogDays === undefined) {
+  if (!name && !supportEmail && !hostname && !publicBaseUrl && !timeZone && usersAccessLogDays === undefined) {
     throw new Error(
-      "Nothing to set. Provide at least --name, --hostname, --public-base-url, --support-email, --time-zone, --entitlement-grace-days, or --users-access-log-days.",
+      "Nothing to set. Provide at least --name, --hostname, --public-base-url, --support-email, --time-zone, or --users-access-log-days.",
     );
   }
 
@@ -2724,7 +2718,6 @@ async function updateSiteFields(flags: FlagMap, json: boolean) {
     publicBaseUrl,
     supportEmail,
     timeZone,
-    entitlementGraceDays,
     usersAccessLogDays,
     mailFrom: `no-reply@${mailHost}`,
     mailFromName: name ?? current.name,
@@ -2744,7 +2737,6 @@ async function updateSiteFields(flags: FlagMap, json: boolean) {
       publicBaseUrl: updated.publicBaseUrl,
       supportEmail: updated.supportEmail,
       timeZone: updated.timeZone,
-      entitlementGraceDays: updated.entitlementGraceDays,
       usersAccessLogDays: updated.usersAccessLogDays,
     });
     return;

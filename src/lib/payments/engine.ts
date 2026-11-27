@@ -2,38 +2,49 @@ import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { Pool, PoolClient } from "pg";
 import type {
-  PhisPaymentCheckoutPlan, PhisPaymentCommandResult, PhisPaymentCreateInput, PhisPaymentErrorCode, PhisPaymentGrantedOperation, PhisPaymentMerchantActionPolicy, PhisPaymentMoney,
-  PhisPaymentPricing, PhisPaymentProfileReach, PhisPaymentProfileSummary, PhisPaymentProviderExecution, PhisPaymentProviderObservation, PhisPaymentProviderStoredMethod, PhisPaymentProviderV1,
-  PhisPaymentStoredMethod, PhisPaymentSubscription, PhisPaymentSubscriptionCreateInput, PhisPaymentSubscriptionPeriod, PhisPaymentSubscriptionResult,
-  PhisPaymentSubscriptionTerms, PhisPaymentsCapabilityV1,
+  PhisPaymentCheckoutPlan, PhisPaymentCollection, PhisPaymentCollectionMode, PhisPaymentCommandResult, PhisPaymentCreateInput, PhisPaymentErrorCode,
+  PhisPaymentGrantedOperation, PhisPaymentInterval, PhisPaymentIntervalFeatures, PhisPaymentMerchantActionPolicy, PhisPaymentMoney,
+  PhisPaymentPricing, PhisPaymentProfileFeatures, PhisPaymentProfileSummary, PhisPaymentProviderExecution, PhisPaymentProviderObservation,
+  PhisPaymentProviderStoredMethod, PhisPaymentProviderV1, PhisPaymentSettlement, PhisPaymentStoredMethod, PhisPaymentSubscription,
+  PhisPaymentSubscriptionChange, PhisPaymentSubscriptionChangeQuote, PhisPaymentSubscriptionChangeRequest, PhisPaymentSubscriptionChangeResult,
+  PhisPaymentSubscriptionCreateInput, PhisPaymentSubscriptionPeriod, PhisPaymentSubscriptionResult, PhisPaymentSubscriptionTerms, PhisPaymentsCapabilityV1,
 } from "@phis/contracts/payments";
 import {
-  ensurePhisPaymentSubscriptionPeriod, findPhisPaymentSubscriptionIdempotency, insertPhisPaymentSubscription, isPhisPaymentStoredMethodInUse,
-  listPhisPaymentSubscriptionPeriods, listPhisPaymentSubscriptionsOnMethod, postponePhisPaymentSubscription, readPhisPaymentSubscription,
-  readPhisPaymentSubscriptionPeriod, writePhisPaymentSubscription, writePhisPaymentSubscriptionPeriod,
+  PhisPaymentCurrencyFeatureFlag, PhisPaymentDocumentFeatureFlag, PhisPaymentFeatureFlag, PhisPaymentFlag, PhisPaymentSubscriptionFlag,
+} from "@phis/contracts/payments";
+import {
+  PHIS_PAYMENT_PERIOD_MOMENT_FLAG, ensurePhisPaymentSubscriptionPeriod, findPhisPaymentSubscriptionChangeByPayment, findPhisPaymentSubscriptionChangeIdempotency,
+  findPhisPaymentSubscriptionIdempotency, insertPhisPaymentSubscription, insertPhisPaymentSubscriptionChange, isPhisPaymentStoredMethodInUse,
+  listPhisPaymentSubscriptionChanges, listPhisPaymentSubscriptionPeriods, listPhisPaymentSubscriptionsOnMethod, postponePhisPaymentSubscription,
+  readPhisPaymentSubscription, readPhisPaymentSubscriptionChange, readPhisPaymentSubscriptionPeriod, writePhisPaymentSubscription,
+  writePhisPaymentSubscriptionChange, writePhisPaymentSubscriptionPeriod, type PhisPaymentSubscriptionMoment, type PhisStoredPaymentSubscriptionPeriod,
 } from "../../db/payment-subscriptions.mts";
 import {
-  addPhisPaymentIntervals, nextPhisPaymentDunningAttempt, phisPaymentDunningDeadline, validatePhisPaymentDunningPolicy, validatePhisPaymentInterval,
+  PHIS_PAYMENT_GRACE_MAX_DAYS, PHIS_PAYMENT_LEAD_MAX_DAYS, PHIS_PAYMENT_REMINDER_DAYS, addPhisPaymentDays, addPhisPaymentIntervals, nextPhisPaymentDunningAttempt,
+  phisPaymentUnusedShare, validatePhisPaymentDays, validatePhisPaymentDunningPolicy, validatePhisPaymentInterval,
 } from "./schedule.ts";
 import {
-  claimPhisPayment, claimPhisPaymentProfileRefresh, recordPhisPaymentProfileProbe, rememberPhisPaymentNotification, settlePhisPaymentNotification, findPhisPaymentIdempotency, insertPhisPayment, insertPhisPaymentOperation,
+  claimPhisPayment, claimPhisPaymentProfileRefresh, recordPhisPaymentProfileFeatures, rememberPhisPaymentNotification, settlePhisPaymentNotification, findPhisPaymentIdempotency, insertPhisPayment, insertPhisPaymentOperation,
   listPhisPaymentOperations, listPhisPaymentProfilesGrantedTo, listPhisPaymentRefunds, readPhisPayment, readPhisPaymentOperation, readPhisPaymentProfile,
   readPhisPaymentRefund, writePhisPayment, writePhisPaymentOperation, writePhisPaymentRefund, finishPhisPaymentReceipt,
   findPhisPaymentStoredMethodSetup, insertPhisPaymentStoredMethod, listPhisPaymentStoredMethods, readPhisPaymentStoredMethod,
   revokeSupersededPhisPaymentStoredMethods, writePhisPaymentStoredMethod, writePhisPaymentStoredMethodSetupCheckout,
 } from "../../db/payments.mts";
+import { enqueuePhisPaymentRecordTasks, listPhisPaymentSettlements } from "../../db/payment-records.mts";
 import { withPoolTransaction } from "../db-transaction.ts";
 import {
   PHIS_PAYMENT_CALL_TIMEOUT_MS, PHIS_PAYMENT_ERROR_CODES, PHIS_PAYMENT_KNOCK_REPEATS, PHIS_PAYMENT_REACH_MAX_CURRENCIES, PHIS_PAYMENT_REACH_REFRESH_SECONDS,
 } from "../constants/payments.ts";
-import { phisPaymentReachOf, phisPaymentReachProbe, readPhisPaymentProfileReach } from "./reach.ts";
+import { choosePhisPaymentCollection, phisPaymentMethodCollects, probePhisPaymentProfileCurrency, readPhisPaymentProfileFeatures } from "./profile-features.ts";
 import { PhisPaymentError, copyPhisPaymentAdditions, normalizePhisPaymentTotals, phisPaymentMethodSupports, phisPaymentPricingSelector,
   phisPaymentReturnUrl, requirePhisPaymentCurrency, requirePhisPaymentMinor, requirePhisPaymentReference, validatePhisPaymentExpiresAt, validatePhisPaymentMoney, validatePhisPaymentObservation,
   validatePhisPaymentPricing, validatePhisPaymentPricingSelector, validatePhisPaymentProviderProbe, validatePhisPaymentProviderStoredMethod } from "./validation.ts";
 import type {
   PhisPaymentProfile, PhisPaymentReceipt, PhisPaymentScope, PhisStoredPayment, PhisStoredPaymentCommand, PhisStoredPaymentMethod,
-  PhisStoredPaymentOperation, PhisStoredPaymentRefund, PhisStoredPaymentSubscription,
+  PhisStoredPaymentOperation, PhisStoredPaymentRefund, PhisStoredPaymentSubscription, PhisStoredPaymentSubscriptionChange,
 } from "./types.ts";
+
+const has = (flags: number, bit: number) => (flags & bit) !== 0;
 
 type Action = PhisStoredPaymentOperation["record"]["action"];
 /** What a consumer commands on an existing payment. `create` and `charge` bring one into being instead. */
@@ -42,7 +53,8 @@ type MutationAction = Exclude<Action, "create" | "charge">;
 const grantedFor = (action: Action): PhisPaymentGrantedOperation => action === "charge" ? "read" : action;
 type MutationInput = { paymentId: string; idempotencyKey: string; minor?: string; reason?: string };
 /** The period of a subscription a payment settles; Core's own knowledge, never a consumer's argument. */
-type PeriodLink = { subscriptionId: string; periodIndex: number };
+/** `changeId`: the payment is the one of a change's `due`, linked to it in the payment's own transaction. */
+type PeriodLink = { subscriptionId: string; periodIndex: number; changeId?: string };
 const ENDED_PAYMENT = ["failed", "expired", "canceled"];
 type Options = {
   pool: Pool;
@@ -68,6 +80,11 @@ type Options = {
   providerFailed?: (failure: PhisPaymentProviderFailure) => void;
   /** Told when a reconciliation observes again because a notification arrived while it held the payment. */
   reconcileRepeated?: (repeat: { siteId: number; consumerAddonId: string; paymentId: string; repeat: number; limit: number }) => void;
+  /**
+   * Whether the acting user holds the Site role Admin or Accountant (`listSettlements`); absent or false
+   * without an acting user. Injected for the reason `providerFailed` is.
+   */
+  billingStaff?: () => Promise<boolean>;
 };
 
 export type PhisPaymentProviderFailure = {
@@ -302,10 +319,12 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
     if (!policy || !await this.options.merchantAuthorized("subscriptionPrice", policy)) throw new PhisPaymentError("forbidden");
     const record = await withPoolTransaction(this.pool, async db => {
       const current = (await readPhisPaymentSubscription(db, this.scope.siteId, input.subscriptionId, this.scope.consumerAddonId, true))!;
-      if (current.record.status === "canceled" || current.record.status === "pending") throw new PhisPaymentError("invalid_state");
+      // A pending change already says what the next period costs; the price waits until it is applied or void.
+      if (current.record.status === "canceled" || current.record.status === "pending" || current.record.pendingChange) throw new PhisPaymentError("invalid_state");
       if (current.record.recurring.amount.currency !== recurring.amount.currency) throw new PhisPaymentError("invalid_input");
-      // What the stored method was stored to carry still bounds what it can be charged.
-      const method = current.record.storedMethodId ? await readPhisPaymentStoredMethod(db, this.scope.siteId, current.record.storedMethodId, this.scope.consumerAddonId) : null;
+      // What the stored method was stored to carry still bounds what it can be charged under `automatic`.
+      const method = current.record.collection.mode === "automatic" && current.record.storedMethodId
+        ? await readPhisPaymentStoredMethod(db, this.scope.siteId, current.record.storedMethodId, this.scope.consumerAddonId) : null;
       if (method && (!method.features.stored || !phisPaymentMethodSupports(method.features.stored.pricing, phisPaymentPricingSelector(recurring.pricing)))) throw new PhisPaymentError("unsupported_operation");
       if (isDeepStrictEqual(current.record.recurring, recurring)) return current.record;
       current.record.recurring = recurring; current.record.version += 1;
@@ -397,34 +416,51 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
   }
   /**
    * The profiles this consumer may read, for a seller to choose one by: the grant rule of `granted`, in
-   * one read, and refused to a hook as every operation but `profileReach` is.
+   * one read, and refused to a hook as every operation but `profileFeatures` and `chooseCollection` is.
    */
   async listProfiles(): Promise<readonly PhisPaymentProfileSummary[]> {
     if (this.options.unauthenticated) throw new PhisPaymentError("forbidden");
     return listPhisPaymentProfilesGrantedTo(this.pool, this.scope.siteId, this.scope.consumerAddonId);
   }
 
-  /**
-   * What the profile sells as Merchant of Record in one currency, read from what Core recorded; no
-   * Provider is asked. The one operation a hook may call -- the ban `profile` applies to an
-   * unauthenticated caller is not applied here and nowhere else -- because its answer names what the
-   * Provider sells and nothing of a payment, a customer or the merchant's account.
-   */
-  async profileReach(input: Parameters<PhisPaymentsCapabilityV1["profileReach"]>[0]): Promise<PhisPaymentProfileReach | null> {
-    requirePhisPaymentReference(input?.profileKey);
-    const currency = requirePhisPaymentCurrency(input.currency);
-    const { profile } = await this.granted(input.profileKey, "read");
+  /** The profile under `read` for a hook-safe question: enabled and not retired, whoever asks. */
+  private async recorded(profileKey: unknown, currency: unknown) {
+    requirePhisPaymentReference(profileKey);
+    const code = requirePhisPaymentCurrency(currency);
+    const { profile } = await this.granted(profileKey, "read");
     if (!profile.enabled || profile.retired) throw new PhisPaymentError("profile_unavailable");
-    return readPhisPaymentProfileReach(profile, currency);
+    return readPhisPaymentProfileFeatures(profile, code);
   }
 
   /**
-   * Asks the Provider again in each currency and records every answer, as `phis payment profile probe`
-   * does. A merchant's act under `merchantActions.profileRefresh`, and at most once a minute per profile,
-   * counted from the last time Core asked it anything (`claimPhisPaymentProfileRefresh`). A currency
-   * answered before a later one fails stays recorded: it is what the Provider said.
+   * What the profile can do in one currency, per pricing policy, read from what Core recorded; no Provider
+   * is asked. One of the two operations a hook may call -- the ban `profile` applies to an unauthenticated
+   * caller is not applied here and in `chooseCollection` -- because its answer names what the Provider can
+   * do and nothing of a payment, a customer or the merchant's account.
    */
-  async refreshProfileReach(input: Parameters<PhisPaymentsCapabilityV1["refreshProfileReach"]>[0]): Promise<readonly PhisPaymentProfileReach[]> {
+  async profileFeatures(input: Parameters<PhisPaymentsCapabilityV1["profileFeatures"]>[0]): Promise<PhisPaymentProfileFeatures | null> {
+    return this.recorded(input?.profileKey, input?.currency);
+  }
+
+  /** The collection mode a subscription would get there, from the recording only (`choosePhisPaymentCollection`). */
+  async chooseCollection(input: Parameters<PhisPaymentsCapabilityV1["chooseCollection"]>[0]): Promise<{ mode: PhisPaymentCollectionMode; features: PhisPaymentIntervalFeatures } | null> {
+    const recording = await this.recorded(input?.profileKey, input?.currency);
+    const pricing = validatePhisPaymentPricingSelector(input.pricing);
+    const interval = validatePhisPaymentInterval(input.interval);
+    if (!Array.isArray(input.modes) || input.modes.length > 3 || input.modes.some(mode => !["automatic", "payment-request", "provider-managed"].includes(mode))) {
+      throw new PhisPaymentError("invalid_input");
+    }
+    return choosePhisPaymentCollection(recording, pricing, interval, input.modes);
+  }
+
+  /**
+   * Asks the Provider again in each currency, once per pricing policy its methods declare, and records
+   * every answer, as `phis payment profile probe` does. A merchant's act under
+   * `merchantActions.profileRefresh`, and at most once a minute per profile, counted from the last time Core
+   * asked it anything (`claimPhisPaymentProfileRefresh`). A currency answered before a later one fails stays
+   * recorded: it is what the Provider said.
+   */
+  async refreshProfileFeatures(input: Parameters<PhisPaymentsCapabilityV1["refreshProfileFeatures"]>[0]): Promise<readonly PhisPaymentProfileFeatures[]> {
     requirePhisPaymentReference(input?.profileKey);
     if (!Array.isArray(input.currencies) || input.currencies.length === 0 || input.currencies.length > PHIS_PAYMENT_REACH_MAX_CURRENCIES) throw new PhisPaymentError("invalid_input");
     const currencies = input.currencies.map(requirePhisPaymentCurrency);
@@ -442,19 +478,18 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       this.providerFailed("probe", error, { profileKey: profile.key });
       throw new PhisPaymentError("provider_unavailable");
     }
-    const reaches: PhisPaymentProfileReach[] = [];
+    const recordings: PhisPaymentProfileFeatures[] = [];
     for (const currency of currencies) {
-      let probe;
-      try { probe = await provider.probe({ ...phisPaymentReachProbe(currency), signal: this.signal() }); }
+      let probed;
+      try { probed = await probePhisPaymentProfileCurrency(provider, profile, currency, () => this.signal()); }
       catch (error) {
+        if (error instanceof PhisPaymentError) throw error;
         this.providerFailed("probe", error, { profileKey: profile.key });
         throw new PhisPaymentError("provider_unavailable");
       }
-      const normalized = validatePhisPaymentProviderProbe(probe, profile);
-      const probedAt = await recordPhisPaymentProfileProbe(this.pool, profile, normalized.merchantIdentity, normalized.mode, currency, normalized.methods);
-      reaches.push(phisPaymentReachOf(currency, probedAt, normalized.methods));
+      recordings.push(await recordPhisPaymentProfileFeatures(this.pool, profile, probed.merchantIdentity, probed.mode, currency, probed.policies));
     }
-    return reaches;
+    return recordings;
   }
 
   private validateFlow(captureMode: string, checkoutKind: string) {
@@ -470,11 +505,13 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       throw new PhisPaymentError("provider_unavailable");
     }
     const normalized = validatePhisPaymentProviderProbe(probe, profile);
-    // For a recurring use only what can be stored. How (with a payment, or alone) is `stored.setup`, which
-    // the caller that stores asks about; what a later charge may carry is `stored.pricing`, judged then.
+    // For a recurring use only what can collect a subscription in a mode Core runs: `automatic` with a stored
+    // method, or `payment-request`. Which mode and interval is the caller's to judge (`phisPaymentMethodCollects`);
+    // how a method is stored is `stored.setup`, and what a later charge may carry is `stored.pricing`, judged then.
     return normalized.methods.filter(m => m.features.captureModes.includes(input.captureMode) && m.features.checkoutKinds.includes(input.checkoutKind)
       && phisPaymentMethodSupports(m.features.pricing, input.pricing)
-      && (input.usage !== "recurring" || m.features.stored != null)).map(method => ({ ...method, profileKey: profile.key }));
+      && (input.usage !== "recurring" || (!!m.features.stored && !!m.features.collection?.automatic) || !!m.features.collection?.paymentRequest))
+      .map(method => ({ ...method, profileKey: profile.key }));
   }
 
   create(input: PhisPaymentCreateInput): Promise<PhisPaymentCommandResult> { return this.createPayment(input, null); }
@@ -490,12 +527,14 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
     const store = input.store == null ? null : { payerReference: input.store.payerReference };
     if (store) requirePhisPaymentReference(store.payerReference);
     const expiresAt = validatePhisPaymentExpiresAt(input.expiresAt);
+    const documents = this.validateDocumentOwner(input.documentSubject, input.documentLabel);
     const profile = await this.profile(input.profileKey, "create");
     // Storing a method is a right of its own: a grant to take a payment does not include keeping the means.
     if (store) await this.profile(input.profileKey, "method-store");
     const request = { profileKey: input.profileKey, reference: input.reference, amount: { currency: input.amount.currency, minor: input.amount.minor }, pricing,
       description: input.description, captureMode: input.captureMode, methodKey: input.methodKey, checkoutKind: input.checkoutKind, returnPath: input.returnPath,
-      ...(store ? { store } : {}), ...(expiresAt ? { expiresAt } : {}) };
+      ...(store ? { store } : {}), ...(expiresAt ? { expiresAt } : {}),
+      ...(documents.subject !== null ? { documentSubject: documents.subject } : {}), ...(documents.label !== null ? { documentLabel: documents.label } : {}) };
     // Idempotent retries are checked before a live availability probe; completed requests do not depend on the PSP answering.
     const previous = await withPoolTransaction(this.pool, db => findPhisPaymentIdempotency(db, this.scope, "create", input.idempotencyKey));
     if (previous) {
@@ -532,9 +571,10 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       siteId: this.scope.siteId, consumerAddonId: this.scope.consumerAddonId, providerKey: profile.providerKey,
       merchantIdentity: profile.merchantIdentity!, profileRevision: profile.revision, currencyExponent: exponent, features: method.features,
       binding: null, generation: 0, leaseToken: null, leaseUntil: null, notifiedGeneration: null,
+      documentSubject: documents.subject, documentLabel: documents.label,
       record: { id, reference: input.reference, profileKey: profile.key, mode: profile.mode, amount: request.amount, pricing, totals: null, captureMode: input.captureMode,
         status: "created", authorizedMinor: "0", capturedMinor: "0", refundedMinor: "0", authorizationExpiresAt: null,
-        checkout: null, reconciliationRequired: true, version: 1, lastObservedAt: null, initiator: "customer", storedMethodId: storedMethod?.record.id ?? null,
+        checkout: null, flags: PhisPaymentFlag.ReconciliationRequired, version: 1, lastObservedAt: null, initiator: "customer", storedMethodId: storedMethod?.record.id ?? null,
         subscriptionId: link?.subscriptionId ?? null, periodIndex: link?.periodIndex ?? null },
     };
     const operation: PhisStoredPaymentOperation = {
@@ -550,6 +590,7 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       await insertPhisPayment(db, payment); await insertPhisPaymentOperation(db, this.scope, input.idempotencyKey, operation);
       if (storedMethod) await insertPhisPaymentStoredMethod(db, storedMethod);
       if (link) await this.notePeriodPayment(db, link, id, false);
+      if (link?.changeId) await this.linkChangePayment(db, link, id);
       await writePhisPayment(db, payment, { operationId, refundId: null });
       await claimPhisPayment(db, payment);
       return null;
@@ -570,6 +611,7 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
   async chargeStoredMethod(input: {
     storedMethodId: string; reference: string; idempotencyKey: string; amount: PhisPaymentMoney; pricing: PhisPaymentPricing;
     description: string; initiator: "merchant" | "schedule"; subscription?: PeriodLink | null;
+    documentSubject?: string | null; documentLabel?: string | null;
   }): Promise<PhisPaymentCommandResult> {
     input = structuredClone(input);
     const exponent = validatePhisPaymentMoney(input.amount);
@@ -577,6 +619,7 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
     if (typeof input.description !== "string" || input.description.length < 1 || input.description.length > 200
       || (input.initiator !== "merchant" && input.initiator !== "schedule")) throw new PhisPaymentError("invalid_input");
     const pricing = validatePhisPaymentPricing(input.pricing, input.amount);
+    const documents = this.validateDocumentOwner(input.documentSubject, input.documentLabel);
     const found = await this.storedMethod(input.storedMethodId, "create");
     if (!found) throw new PhisPaymentError("not_found");
     const { method, profile } = found;
@@ -601,9 +644,10 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       siteId: this.scope.siteId, consumerAddonId: this.scope.consumerAddonId, providerKey: profile.providerKey,
       merchantIdentity: profile.merchantIdentity!, profileRevision: profile.revision, currencyExponent: exponent, features: method.features,
       binding: null, generation: 0, leaseToken: null, leaseUntil: null, notifiedGeneration: null,
+      documentSubject: documents.subject, documentLabel: documents.label,
       record: { id, reference: input.reference, profileKey: profile.key, mode: profile.mode, amount: request.amount, pricing, totals: null, captureMode: "automatic",
         status: "created", authorizedMinor: "0", capturedMinor: "0", refundedMinor: "0", authorizationExpiresAt: null,
-        checkout: null, reconciliationRequired: true, version: 1, lastObservedAt: null, initiator: input.initiator, storedMethodId: method.record.id,
+        checkout: null, flags: PhisPaymentFlag.ReconciliationRequired, version: 1, lastObservedAt: null, initiator: input.initiator, storedMethodId: method.record.id,
         subscriptionId: input.subscription?.subscriptionId ?? null, periodIndex: input.subscription?.periodIndex ?? null },
     };
     const operation: PhisStoredPaymentOperation = {
@@ -639,6 +683,18 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
     await writePhisPaymentSubscriptionPeriod(db, period);
   }
 
+  /**
+   * Whose documents a payment's are and their list line (`billing:v1`): a subject reference as
+   * `entitlements:v1` hands it out, or nobody's; a line of text, or the payment's description.
+   */
+  private validateDocumentOwner(subject: unknown, label: unknown): { subject: string | null; label: string | null } {
+    if (subject !== undefined && subject !== null) requirePhisPaymentReference(subject);
+    if (label !== undefined && label !== null && (typeof label !== "string" || label.length < 1 || label.length > 200 || /[\x00-\x1f\x7f]/.test(label))) {
+      throw new PhisPaymentError("invalid_input");
+    }
+    return { subject: (subject as string | null | undefined) ?? null, label: (label as string | null | undefined) ?? null };
+  }
+
   private validateTerms(value: PhisPaymentSubscriptionTerms): PhisPaymentSubscriptionTerms {
     if (!value || typeof value !== "object") throw new PhisPaymentError("invalid_input");
     validatePhisPaymentMoney(value.amount);
@@ -663,10 +719,51 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
     return listPhisPaymentSubscriptionPeriods(this.pool, subscriptionId);
   }
 
+  /** How the periods after the first are paid, as a consumer states it; `provider-managed` is not built. */
+  private validateCollection(value: unknown, interval: PhisPaymentInterval, graceDays: number): PhisPaymentCollection {
+    const collection = value as PhisPaymentCollection | null;
+    if (!collection || typeof collection !== "object" || Array.isArray(collection)) throw new PhisPaymentError("invalid_input");
+    if (collection.mode === "provider-managed") throw new PhisPaymentError("unsupported_operation");
+    if (collection.mode === "automatic") {
+      if (Object.keys(collection).some(key => key !== "mode" && key !== "dunning")) throw new PhisPaymentError("invalid_input");
+      return { mode: "automatic", dunning: validatePhisPaymentDunningPolicy(collection.dunning, graceDays) };
+    }
+    if (collection.mode === "payment-request") {
+      if (Object.keys(collection).some(key => key !== "mode" && key !== "leadDays")) throw new PhisPaymentError("invalid_input");
+      return { mode: "payment-request", leadDays: validatePhisPaymentDays(collection.leadDays, interval, PHIS_PAYMENT_LEAD_MAX_DAYS) };
+    }
+    throw new PhisPaymentError("invalid_input");
+  }
+
+  /** The boundary at the end of period `index`, from the current term's start. */
+  private periodEnd(subscription: PhisStoredPaymentSubscription, index: number): string {
+    return addPhisPaymentIntervals(new Date(subscription.anchorAt!), subscription.record.interval, index - subscription.termFirstIndex + 1).toISOString();
+  }
+
+  /** When Core next acts for a subscription whose latest paid period ends at `endsAt`: the renewal, or the request date. */
+  private nextAfterPaid(record: PhisPaymentSubscription, endsAt: string): string {
+    return record.collection.mode === "payment-request" ? addPhisPaymentDays(new Date(endsAt), -record.collection.leadDays).toISOString() : endsAt;
+  }
+
   /**
-   * The agreement first, as `pending`, then its first payment, which is an ordinary hosted payment that
-   * also stores the method. What happens to that payment decides the rest: captured, the subscription is
-   * active and its first period runs from then; ended without a capture, it is canceled.
+   * The next moment of a requested period under `payment-request` that has not been said: the reminder
+   * (3 days before its start, where that lies after the request), the end of the paid period, the day
+   * before the grace ends (where the grace is at least 2 days), and the end of the grace.
+   */
+  private nextMoment(record: PhisPaymentSubscription, period: PhisStoredPaymentSubscriptionPeriod): string {
+    const startsAt = new Date(period.record.startsAt);
+    const said = (moment: keyof typeof PHIS_PAYMENT_PERIOD_MOMENT_FLAG) => has(period.moments, PHIS_PAYMENT_PERIOD_MOMENT_FLAG[moment]);
+    const reminder = addPhisPaymentDays(startsAt, -PHIS_PAYMENT_REMINDER_DAYS);
+    if (!said("reminder") && !said("due") && period.record.requestedAt && reminder > new Date(period.record.requestedAt)) return reminder.toISOString();
+    if (!said("due")) return startsAt.toISOString();
+    if (record.graceDays >= 2 && !said("grace-ending")) return addPhisPaymentDays(new Date(period.record.graceEndsAt), -1).toISOString();
+    return period.record.graceEndsAt;
+  }
+
+  /**
+   * The agreement first, as `pending`, then its first payment, which is an ordinary hosted payment and,
+   * under `automatic`, also stores the method. What happens to that payment decides the rest: captured, the
+   * subscription is active and its first term runs from then; ended without a capture, it is canceled.
    */
   async createSubscription(input: PhisPaymentSubscriptionCreateInput): Promise<PhisPaymentSubscriptionResult> {
     input = structuredClone(input);
@@ -676,16 +773,21 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
     if (input.reference.length > 200 || (input.methodKey !== null && (typeof input.methodKey !== "string" || input.methodKey.length > 255))) throw new PhisPaymentError("invalid_input");
     this.validateFlow("automatic", input.checkoutKind);
     const interval = validatePhisPaymentInterval(input.interval);
-    const dunning = validatePhisPaymentDunningPolicy(input.dunning);
+    const graceDays = validatePhisPaymentDays(input.graceDays, interval, PHIS_PAYMENT_GRACE_MAX_DAYS);
+    const collection = this.validateCollection(input.collection, interval, graceDays);
     const recurring = this.validateTerms(input.recurring);
     const first = this.validateTerms(input.first);
     if (recurring.amount.currency !== first.amount.currency) throw new PhisPaymentError("invalid_input");
+    const documents = this.validateDocumentOwner(input.documentSubject, input.documentLabel);
+    const automatic = collection.mode === "automatic";
     const profile = await this.profile(input.profileKey, "subscription-create");
-    const request = { profileKey: input.profileKey, reference: input.reference, payerReference: input.payerReference, interval, recurring, first, dunning,
-      methodKey: input.methodKey, checkoutKind: input.checkoutKind, returnPath: input.returnPath };
+    const request = { profileKey: input.profileKey, reference: input.reference, payerReference: input.payerReference, interval, recurring, first, collection, graceDays,
+      methodKey: input.methodKey, checkoutKind: input.checkoutKind, returnPath: input.returnPath,
+      ...(documents.subject !== null ? { documentSubject: documents.subject } : {}), ...(documents.label !== null ? { documentLabel: documents.label } : {}) };
     const firstPayment = (id: string) => this.createPayment({ profileKey: input.profileKey, reference: `${input.reference}#0`, idempotencyKey: `subscription:${id}:first`,
       amount: first.amount, pricing: first.pricing, description: first.description, captureMode: "automatic", methodKey: input.methodKey,
-      checkoutKind: input.checkoutKind, returnPath: input.returnPath, store: { payerReference: input.payerReference } }, { subscriptionId: id, periodIndex: 0 });
+      checkoutKind: input.checkoutKind, returnPath: input.returnPath, store: automatic ? { payerReference: input.payerReference } : null,
+      documentSubject: documents.subject, documentLabel: documents.label }, { subscriptionId: id, periodIndex: 0 });
 
     const previous = await withPoolTransaction(this.pool, db => findPhisPaymentSubscriptionIdempotency(db, this.scope, input.idempotencyKey));
     if (previous) {
@@ -694,17 +796,20 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       return { subscription: (await readPhisPaymentSubscription(this.pool, this.scope.siteId, previous.record.id, this.scope.consumerAddonId))!.record, payment };
     }
     if (!profile.enabled || profile.retired || !profile.probedAt || !profile.merchantIdentity) throw new PhisPaymentError("profile_unavailable");
-    // Before anything is stored: the method has to be storable, and able to carry what a renewal costs.
+    // Before anything is stored: the method has to collect in the mode asked for this interval, and be able
+    // to carry what a renewal costs -- stored and charged without the customer, or on each period's checkout.
     const available = await this.methods(profile, { amount: first.amount, captureMode: "automatic", checkoutKind: input.checkoutKind,
       pricing: phisPaymentPricingSelector(first.pricing), usage: "recurring" });
     const method = available.find(m => m.methodKey === input.methodKey);
     if (!method) throw new PhisPaymentError("method_unavailable");
-    if (!method.features.stored || !phisPaymentMethodSupports(method.features.stored.pricing, phisPaymentPricingSelector(recurring.pricing))) throw new PhisPaymentError("unsupported_operation");
+    if (!phisPaymentMethodCollects(method.features, collection.mode, interval)) throw new PhisPaymentError("unsupported_operation");
+    const carries = automatic ? method.features.stored!.pricing : method.features.pricing;
+    if (!phisPaymentMethodSupports(carries, phisPaymentPricingSelector(recurring.pricing))) throw new PhisPaymentError("unsupported_operation");
 
     const subscription: PhisStoredPaymentSubscription = {
-      siteId: this.scope.siteId, consumerAddonId: this.scope.consumerAddonId, request, anchorAt: null, leaseToken: null,
+      siteId: this.scope.siteId, consumerAddonId: this.scope.consumerAddonId, request, anchorAt: null, termFirstIndex: 0, leaseToken: null,
       record: { id: randomUUID(), reference: input.reference, profileKey: profile.key, mode: profile.mode, payerReference: input.payerReference, storedMethodId: null,
-        interval, recurring, dunning, status: "pending", customerActionRequired: false, period: null, nextChargeAt: null, cancelAtPeriodEnd: false, endedAt: null, version: 1 },
+        interval, recurring, collection, graceDays, status: "pending", flags: 0, period: null, term: null, nextChargeAt: null, pendingChange: null, endedAt: null, version: 1 },
     };
     const raced = await withPoolTransaction(this.pool, async db => {
       const found = await findPhisPaymentSubscriptionIdempotency(db, this.scope, input.idempotencyKey);
@@ -727,21 +832,74 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
     return { subscription: (await readPhisPaymentSubscription(this.pool, this.scope.siteId, id, this.scope.consumerAddonId))!.record, payment };
   }
 
-  /** Ends a subscription under its row lock: nothing further is charged, and an unpaid period is void. */
+  /** Whose documents a subscription's payments are, as its request stated. */
+  private subscriptionDocuments(subscription: PhisStoredPaymentSubscription): { documentSubject: string | null; documentLabel: string | null } {
+    const { documentSubject, documentLabel } = subscription.request as { documentSubject?: string; documentLabel?: string };
+    return { documentSubject: documentSubject ?? null, documentLabel: documentLabel ?? null };
+  }
+
+  /**
+   * Voids the subscription's pending change, under its row lock, and answers its id; `null` where none was
+   * pending. The payment of an awaiting change is not cancelled here: what such a payment captures later
+   * changes nothing, and the consumer learns of it from the payment's own event.
+   */
+  private async voidPendingChange(db: PoolClient, subscription: PhisStoredPaymentSubscription, only?: PhisPaymentSubscriptionChange["status"]): Promise<string | null> {
+    const pending = subscription.record.pendingChange;
+    if (!pending || (only && pending.status !== only)) return null;
+    const change = await readPhisPaymentSubscriptionChange(db, subscription.record.id, pending.id, true);
+    if (change && (change.record.status === "scheduled" || change.record.status === "awaiting_payment")) {
+      change.record.status = "void"; change.record.version += 1;
+      await writePhisPaymentSubscriptionChange(db, change);
+    }
+    subscription.record.pendingChange = null;
+    return pending.id;
+  }
+
+  /**
+   * Applies a scheduled change at the boundary `startsAt`, before the period from there on is charged or
+   * requested: a new term starts there, and the period costs the new terms. Answers the change, or `null`.
+   */
+  private async applyScheduledChange(db: PoolClient, subscription: PhisStoredPaymentSubscription, startsAt: string, index: number): Promise<PhisPaymentSubscriptionChange | null> {
+    const pending = subscription.record.pendingChange;
+    if (!pending || pending.status !== "scheduled") return null;
+    const change = await readPhisPaymentSubscriptionChange(db, subscription.record.id, pending.id, true);
+    subscription.record.pendingChange = null;
+    if (!change || change.record.status !== "scheduled") return null;
+    this.takeTerms(subscription, change.record, startsAt, index);
+    Object.assign(change.record, { status: "applied", effectiveAt: startsAt, periodIndex: index });
+    change.record.version += 1;
+    await writePhisPaymentSubscriptionChange(db, change);
+    return change.record;
+  }
+
+  /** The terms of a change, from period `index` on, starting a new term at `startsAt`. */
+  private takeTerms(subscription: PhisStoredPaymentSubscription, change: PhisPaymentSubscriptionChange, startsAt: string, index: number) {
+    const { record } = subscription;
+    record.interval = structuredClone(change.interval);
+    record.recurring = structuredClone(change.recurring);
+    record.graceDays = change.graceDays;
+    if (record.collection.mode === "payment-request" && change.leadDays !== null) record.collection = { mode: "payment-request", leadDays: change.leadDays };
+    record.term = { startsAt, firstIndex: index };
+    subscription.anchorAt = startsAt; subscription.termFirstIndex = index;
+  }
+
+  /** Ends a subscription under its row lock: nothing further is charged, an unpaid period is void, a pending change too. */
   private async endSubscription(db: PoolClient, subscription: PhisStoredPaymentSubscription, at: Date) {
     const openIndex = (subscription.record.period?.index ?? -1) + 1;
     const open = await readPhisPaymentSubscriptionPeriod(db, subscription.record.id, openIndex, true);
     // A period that already failed keeps saying so; only one still open becomes void.
     if (open && open.record.status === "open") { open.record.status = "void"; await writePhisPaymentSubscriptionPeriod(db, open); }
-    Object.assign(subscription.record, { status: "canceled", endedAt: at.toISOString(), nextChargeAt: null, customerActionRequired: false, cancelAtPeriodEnd: false });
+    const changeId = await this.voidPendingChange(db, subscription);
+    Object.assign(subscription.record, { status: "canceled", endedAt: at.toISOString(), nextChargeAt: null, flags: 0 });
     subscription.record.version += 1;
-    await writePhisPaymentSubscription(db, subscription, open ? openIndex : null, this.entitlementListeners);
+    await writePhisPaymentSubscription(db, subscription, open ? openIndex : null, this.entitlementListeners, { changeId });
   }
 
   /**
-   * At the period end is what a customer asks for, through the consumer: nothing more is charged and what
-   * was paid for is kept. A subscription with nothing paid ahead has no such end to wait for and ends at
-   * once. Ending a paid subscription at once is the merchant's act, and refunds nothing by itself.
+   * At the period end is what a customer asks for, through the consumer: nothing more is charged or
+   * requested and what was paid for is kept; a pending change is void. A subscription with nothing paid
+   * ahead has no such end to wait for and ends at once. Ending a paid subscription at once is the
+   * merchant's act, and refunds nothing by itself.
    */
   async cancelSubscription(input: Parameters<PhisPaymentsCapabilityV1["cancelSubscription"]>[0]): Promise<PhisPaymentSubscription | null> {
     if (input?.at !== "period-end" && input?.at !== "now") throw new PhisPaymentError("invalid_input");
@@ -757,9 +915,10 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       if (current.record.status === "canceled") return current.record;
       const paidAhead = current.record.status === "active" && current.record.period !== null && new Date(current.record.period.endsAt) > new Date();
       if (input.at === "period-end" && paidAhead) {
-        if (!current.record.cancelAtPeriodEnd) {
-          current.record.cancelAtPeriodEnd = true; current.record.version += 1;
-          await writePhisPaymentSubscription(db, current, null, this.entitlementListeners);
+        if (!has(current.record.flags, PhisPaymentSubscriptionFlag.CancelAtPeriodEnd) || current.record.pendingChange) {
+          const changeId = await this.voidPendingChange(db, current);
+          current.record.flags |= PhisPaymentSubscriptionFlag.CancelAtPeriodEnd; current.record.version += 1;
+          await writePhisPaymentSubscription(db, current, null, this.entitlementListeners, { changeId });
         }
       } else await this.endSubscription(db, current, new Date());
       return current.record;
@@ -768,12 +927,17 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
     return record;
   }
 
+  /** Takes back a cancellation at the period end, until that end has come; a voided change does not come back. */
   async resumeSubscription(subscriptionId: string): Promise<PhisPaymentSubscription | null> {
     if (!await this.subscription(subscriptionId, "subscription-cancel")) return null;
     const record = await withPoolTransaction(this.pool, async db => {
       const current = (await readPhisPaymentSubscription(db, this.scope.siteId, subscriptionId, this.scope.consumerAddonId, true))!;
-      if (current.record.status !== "active" || !current.record.cancelAtPeriodEnd) throw new PhisPaymentError("invalid_state");
-      current.record.cancelAtPeriodEnd = false; current.record.version += 1;
+      if (current.record.status !== "active" || !has(current.record.flags, PhisPaymentSubscriptionFlag.CancelAtPeriodEnd)) throw new PhisPaymentError("invalid_state");
+      current.record.flags &= ~PhisPaymentSubscriptionFlag.CancelAtPeriodEnd;
+      // Waiting for the end only, the schedule may have put off the request; it is owed from its own date again.
+      const open = await readPhisPaymentSubscriptionPeriod(db, current.record.id, current.record.period!.index + 1);
+      if (!open) current.record.nextChargeAt = this.nextAfterPaid(current.record, current.record.period!.endsAt);
+      current.record.version += 1;
       await writePhisPaymentSubscription(db, current, null, this.entitlementListeners);
       return current.record;
     });
@@ -782,26 +946,33 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
   }
 
   /**
-   * The customer pays the open period themselves, on a checkout, which stores the method anew. It is the
-   * way back from "the customer has to return", and from a subscription Core stopped trying to charge.
+   * The customer pays the open period themselves, on a checkout, until its grace ends: a `past_due` one in
+   * every mode, and under `payment-request` also a requested one while the subscription is `active`. Under
+   * `automatic` the checkout stores the method anew; it is the way back from "the customer has to return",
+   * and from a subscription Core stopped trying to charge. Under `payment-request` nothing is stored.
    */
   async settleSubscription(input: Parameters<PhisPaymentsCapabilityV1["settleSubscription"]>[0]): Promise<PhisPaymentCommandResult> {
     requirePhisPaymentReference(input.idempotencyKey);
     const found = await this.subscription(input.subscriptionId, "subscription-cancel");
     if (!found) throw new PhisPaymentError("not_found");
     const { record } = found.subscription;
-    if (record.status !== "past_due" && record.status !== "unpaid") throw new PhisPaymentError("invalid_state");
     const index = (record.period?.index ?? -1) + 1;
     const period = await readPhisPaymentSubscriptionPeriod(this.pool, record.id, index);
-    if (!period) throw new PhisPaymentError("invalid_state");
+    const requested = record.collection.mode === "payment-request" && record.status === "active" && period?.record.status === "open";
+    if ((record.status !== "past_due" && !requested) || !period || period.record.status !== "open") throw new PhisPaymentError("invalid_state");
+    if (Date.now() >= Date.parse(period.record.graceEndsAt)) throw new PhisPaymentError("invalid_state");
+    const automatic = record.collection.mode === "automatic";
     return this.createPayment({ profileKey: record.profileKey, reference: `${record.reference}#${index}`, idempotencyKey: `subscription:${record.id}:${index}:settle:${input.idempotencyKey}`,
       amount: period.record.amount, pricing: record.recurring.pricing, description: record.recurring.description, captureMode: "automatic", methodKey: input.methodKey,
-      checkoutKind: input.checkoutKind, returnPath: input.returnPath, store: { payerReference: record.payerReference } }, { subscriptionId: record.id, periodIndex: index });
+      checkoutKind: input.checkoutKind, returnPath: input.returnPath, store: automatic ? { payerReference: record.payerReference } : null,
+      ...this.subscriptionDocuments(found.subscription) }, { subscriptionId: record.id, periodIndex: index });
   }
 
   async replaceSubscriptionMethod(input: Parameters<PhisPaymentsCapabilityV1["replaceSubscriptionMethod"]>[0]): Promise<PhisPaymentSubscription | null> {
     const found = await this.subscription(input.subscriptionId, "subscription-cancel");
     if (!found) return null;
+    // Only a subscription Core charges without the customer has a method to replace.
+    if (found.subscription.record.collection.mode !== "automatic") throw new PhisPaymentError("unsupported_operation");
     const method = await this.storedMethod(input.storedMethodId, "method-read");
     if (!method) throw new PhisPaymentError("not_found");
     const record = await withPoolTransaction(this.pool, async db => {
@@ -810,11 +981,12 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       if (current.record.status === "canceled" || current.record.status === "pending") throw new PhisPaymentError("invalid_state");
       if (!target || target.record.status !== "active" || target.record.payerReference !== current.record.payerReference
         || target.record.profileKey !== current.record.profileKey) throw new PhisPaymentError("stored_method_unavailable");
-      if (current.record.storedMethodId === target.record.id && !current.record.customerActionRequired) return current.record;
+      const waiting = has(current.record.flags, PhisPaymentSubscriptionFlag.CustomerActionRequired);
+      if (current.record.storedMethodId === target.record.id && !waiting) return current.record;
       current.record.storedMethodId = target.record.id;
-      // With a method that may work, the schedule tries again at its next run instead of waiting out the time.
-      if (current.record.status === "past_due" && current.record.customerActionRequired) {
-        current.record.customerActionRequired = false; current.record.nextChargeAt = new Date().toISOString();
+      // With a method that may work, the schedule tries again at its next run instead of waiting out the grace.
+      if (current.record.status === "past_due" && waiting) {
+        current.record.flags &= ~PhisPaymentSubscriptionFlag.CustomerActionRequired; current.record.nextChargeAt = new Date().toISOString();
       }
       current.record.version += 1;
       await writePhisPaymentSubscription(db, current, null, this.entitlementListeners);
@@ -834,6 +1006,8 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
     // A subscription that has ended stays ended; a payment captured afterwards is the consumer's to refund,
     // and it learns of it from the payment's own event.
     if (!subscription || index === null || subscription.record.status === "canceled") return;
+    const change = await findPhisPaymentSubscriptionChangeByPayment(db, payment.record.id, true);
+    if (change) { await this.settleChangePayment(db, subscription, change, payment); return; }
     const { record } = subscription;
     const status = payment.record.status;
     const now = new Date();
@@ -841,11 +1015,13 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
     if (record.status === "pending") {
       if (index !== 0) return;
       if (status === "captured") {
+        const startsAt = now.toISOString();
         const endsAt = addPhisPaymentIntervals(now, record.interval, 1).toISOString();
-        await ensurePhisPaymentSubscriptionPeriod(db, { subscriptionId: record.id, index: 0, startsAt: now.toISOString(), endsAt,
-          amount: payment.record.amount, status: "paid", paymentIds: [payment.record.id] });
-        subscription.anchorAt = now.toISOString();
-        Object.assign(record, { status: "active", period: { index: 0, startsAt: now.toISOString(), endsAt }, storedMethodId: payment.record.storedMethodId, nextChargeAt: endsAt });
+        await ensurePhisPaymentSubscriptionPeriod(db, { subscriptionId: record.id, index: 0, startsAt, endsAt, amount: payment.record.amount, status: "paid",
+          paymentIds: [payment.record.id], requestedAt: null, graceEndsAt: addPhisPaymentDays(now, record.graceDays).toISOString(), changeId: null, endedEarlyAt: null });
+        subscription.anchorAt = startsAt; subscription.termFirstIndex = 0;
+        Object.assign(record, { status: "active", period: { index: 0, startsAt, endsAt }, term: { startsAt, firstIndex: 0 },
+          storedMethodId: record.collection.mode === "automatic" ? payment.record.storedMethodId : null, nextChargeAt: this.nextAfterPaid(record, endsAt) });
       } else if (ENDED_PAYMENT.includes(status)) {
         Object.assign(record, { status: "canceled", endedAt: now.toISOString(), nextChargeAt: null });
       } else return;
@@ -855,25 +1031,29 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
     }
 
     const period = await readPhisPaymentSubscriptionPeriod(db, record.id, index, true);
-    if (!period || period.record.status === "paid" || period.record.status === "void" || index !== (record.period?.index ?? -1) + 1) return;
+    if (!period || period.record.status === "paid" || period.record.status === "void" || period.record.status === "failed"
+      || index !== (record.period?.index ?? -1) + 1) return;
     if (status === "captured") {
       period.record.status = "paid";
       await writePhisPaymentSubscriptionPeriod(db, period);
-      Object.assign(record, { status: "active", customerActionRequired: false, nextChargeAt: period.record.endsAt,
+      Object.assign(record, { status: "active", nextChargeAt: this.nextAfterPaid(record, period.record.endsAt),
         period: { index, startsAt: period.record.startsAt, endsAt: period.record.endsAt } });
+      record.flags &= ~PhisPaymentSubscriptionFlag.CustomerActionRequired;
       // The customer paid on a checkout that stored a method: that is the one to charge from now on.
-      if (payment.record.initiator === "customer" && payment.record.storedMethodId) record.storedMethodId = payment.record.storedMethodId;
-    } else if (ENDED_PAYMENT.includes(status) && payment.record.initiator === "schedule" && period.record.status === "open"
+      if (record.collection.mode === "automatic" && payment.record.initiator === "customer" && payment.record.storedMethodId) record.storedMethodId = payment.record.storedMethodId;
+    } else if (record.collection.mode === "automatic" && ENDED_PAYMENT.includes(status) && payment.record.initiator === "schedule" && period.record.status === "open"
       && period.record.paymentIds.at(-1) === payment.record.id) {
-      const dueAt = new Date(period.record.startsAt);
       const needsCustomer = errorCode === "customer_action_required" || errorCode === "stored_method_unavailable";
-      const next = needsCustomer ? phisPaymentDunningDeadline(dueAt, record.dunning) : nextPhisPaymentDunningAttempt(dueAt, record.dunning, period.attempts);
-      if (next && (!needsCustomer || next > now)) {
-        Object.assign(record, { status: "past_due", customerActionRequired: needsCustomer, nextChargeAt: next.toISOString() });
-      } else {
-        await this.exhaustSubscriptionPeriod(db, subscription, index, now);
-        return;
-      }
+      const next = needsCustomer ? null : nextPhisPaymentDunningAttempt(new Date(period.record.startsAt), record.collection.dunning, period.attempts);
+      const graceEndsAt = new Date(period.record.graceEndsAt);
+      // A scheduled charge is made at the period's start or later, whatever clock observed its answer.
+      const dueAt = new Date(period.record.startsAt);
+      const at = now < dueAt ? dueAt : now;
+      // Retries lie within the grace; without one, the customer may still settle until the grace ends -- and with
+      // a grace of 0 a declined renewal ends the subscription at once.
+      if (!next && graceEndsAt <= at) { await this.failSubscriptionPeriod(db, subscription, index, at); return; }
+      Object.assign(record, { status: "past_due", nextChargeAt: (next ?? graceEndsAt).toISOString() });
+      if (needsCustomer) record.flags |= PhisPaymentSubscriptionFlag.CustomerActionRequired;
     } else return;
     record.version += 1;
     await writePhisPaymentSubscription(db, subscription, index, this.entitlementListeners);
@@ -884,55 +1064,119 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
    *
    * Called by the scheduler under its lease, with this engine scoped to the subscription's consumer. It
    * decides under the row lock and charges outside it, and it never charges while an earlier payment for
-   * the same period is unresolved: that one is asked about first, and the answer does the rest.
+   * the same period is unresolved: that one is asked about first, and the answer does the rest. Under
+   * `payment-request` it charges nothing: it opens the period and says each moment once.
    */
   async advanceSubscription(subscriptionId: string, now = new Date()): Promise<{ postponed: unknown } | null> {
     const due = await withPoolTransaction(this.pool, async db => {
       const subscription = await readPhisPaymentSubscription(db, this.scope.siteId, subscriptionId, this.scope.consumerAddonId, true);
       const record = subscription?.record;
       if (!subscription || !record?.nextChargeAt || new Date(record.nextChargeAt) > now) return null;
-      if (record.status !== "active" && record.status !== "past_due") return null;
-      const index = (record.period?.index ?? -1) + 1;
+      if ((record.status !== "active" && record.status !== "past_due") || !record.period) return null;
+      const index = record.period.index + 1;
+      const boundary = record.period.endsAt;
+      const quietly = (until: string) => postponePhisPaymentSubscription(db, subscriptionId, new Date(until));
+      const say = async (period: PhisStoredPaymentSubscriptionPeriod | null, fact: { changeId?: string | null; moment?: PhisPaymentSubscriptionMoment }) => {
+        if (period) await writePhisPaymentSubscriptionPeriod(db, period);
+        record.version += 1;
+        await writePhisPaymentSubscription(db, subscription, period ? index : null, this.entitlementListeners, fact);
+      };
+
       if (record.status === "active") {
-        // The paid period is over. A cancelled subscription ends with it; another is owed its next period.
-        if (record.cancelAtPeriodEnd) { await this.endSubscription(db, subscription, new Date(record.period!.endsAt)); return null; }
-        const period = await ensurePhisPaymentSubscriptionPeriod(db, { subscriptionId: record.id, index, startsAt: record.period!.endsAt,
-          endsAt: addPhisPaymentIntervals(new Date(subscription.anchorAt!), record.interval, index + 1).toISOString(),
-          amount: record.recurring.amount, status: "open", paymentIds: [] });
-        return { record, period, index };
+        // A cancelled subscription ends with its paid period; nothing is charged or requested for the next.
+        if (has(record.flags, PhisPaymentSubscriptionFlag.CancelAtPeriodEnd)) {
+          if (now >= new Date(boundary)) await this.endSubscription(db, subscription, new Date(boundary));
+          else await quietly(boundary);
+          return null;
+        }
+        if (record.collection.mode === "automatic") {
+          if (now < new Date(boundary)) { await quietly(boundary); return null; }
+          // A renewal that falls due voids a change still awaiting its payment, and applies a scheduled one first.
+          const voided = await this.voidPendingChange(db, subscription, "awaiting_payment");
+          const applied = await this.applyScheduledChange(db, subscription, boundary, index);
+          const period = await ensurePhisPaymentSubscriptionPeriod(db, { subscriptionId: record.id, index, startsAt: boundary,
+            endsAt: this.periodEnd(subscription, index), amount: record.recurring.amount, status: "open", paymentIds: [], requestedAt: null,
+            graceEndsAt: addPhisPaymentDays(new Date(boundary), record.graceDays).toISOString(), changeId: applied?.id ?? null, endedEarlyAt: null });
+          if (voided || applied) await say(null, { changeId: applied?.id ?? voided });
+          return { subscription, period, index };
+        }
+        const open = await readPhisPaymentSubscriptionPeriod(db, record.id, index, true);
+        if (!open) {
+          const requestAt = this.nextAfterPaid(record, boundary);
+          if (now < new Date(requestAt)) { await quietly(requestAt); return null; }
+          // The request is the period's start under `payment-request`: what applies to a renewal applies here.
+          const voided = await this.voidPendingChange(db, subscription, "awaiting_payment");
+          const applied = await this.applyScheduledChange(db, subscription, boundary, index);
+          const period = await ensurePhisPaymentSubscriptionPeriod(db, { subscriptionId: record.id, index, startsAt: boundary,
+            endsAt: this.periodEnd(subscription, index), amount: record.recurring.amount, status: "open", paymentIds: [], requestedAt: now.toISOString(),
+            graceEndsAt: addPhisPaymentDays(new Date(boundary), record.graceDays).toISOString(), changeId: applied?.id ?? null, endedEarlyAt: null });
+          period.moments |= PHIS_PAYMENT_PERIOD_MOMENT_FLAG.requested;
+          record.flags |= PhisPaymentSubscriptionFlag.CustomerActionRequired;
+          record.nextChargeAt = this.nextMoment(record, period);
+          await say(period, { changeId: applied?.id ?? voided, moment: "requested" });
+          return null;
+        }
+        if (open.record.status !== "open") return null;
+        if (now >= new Date(boundary)) {
+          open.moments |= PHIS_PAYMENT_PERIOD_MOMENT_FLAG.due;
+          record.status = "past_due";
+          record.nextChargeAt = this.nextMoment(record, open);
+          await say(open, { moment: "due" });
+        } else if (!has(open.moments, PHIS_PAYMENT_PERIOD_MOMENT_FLAG.reminder) && new Date(this.nextMoment(record, open)) <= now) {
+          open.moments |= PHIS_PAYMENT_PERIOD_MOMENT_FLAG.reminder;
+          record.nextChargeAt = this.nextMoment(record, open);
+          await say(open, { moment: "reminder" });
+        } else await quietly(this.nextMoment(record, open));
+        return null;
       }
+
       const period = await readPhisPaymentSubscriptionPeriod(db, record.id, index, true);
-      if (!period) return null;
-      // The customer was waited for and did not come.
-      if (record.customerActionRequired) { await this.exhaustSubscriptionPeriod(db, subscription, index, now); return null; }
-      const next = nextPhisPaymentDunningAttempt(new Date(period.record.startsAt), record.dunning, period.attempts);
-      if (!next) { await this.exhaustSubscriptionPeriod(db, subscription, index, now); return null; }
-      return { record, period, index };
+      if (!period || period.record.status !== "open") return null;
+      const graceEndsAt = new Date(period.record.graceEndsAt);
+      if (record.collection.mode === "automatic") {
+        const next = has(record.flags, PhisPaymentSubscriptionFlag.CustomerActionRequired) ? null
+          : nextPhisPaymentDunningAttempt(new Date(period.record.startsAt), record.collection.dunning, period.attempts);
+        // An attempt on the grace's last day is still made; after it, or without one, the grace's end is the end.
+        if (next && next <= now) return { subscription, period, index };
+        if (now >= graceEndsAt) { await this.failSubscriptionPeriod(db, subscription, index, now); return null; }
+        await quietly((next && next < graceEndsAt ? next : graceEndsAt).toISOString());
+        return null;
+      }
+      if (now >= graceEndsAt) { await this.failSubscriptionPeriod(db, subscription, index, now); return null; }
+      if (record.graceDays >= 2 && !has(period.moments, PHIS_PAYMENT_PERIOD_MOMENT_FLAG["grace-ending"]) && addPhisPaymentDays(graceEndsAt, -1) <= now) {
+        period.moments |= PHIS_PAYMENT_PERIOD_MOMENT_FLAG["grace-ending"];
+        record.nextChargeAt = this.nextMoment(record, period);
+        await say(period, { moment: "grace-ending" });
+      } else await quietly(this.nextMoment(record, period));
+      return null;
     });
     if (!due) { await this.options.afterCommit?.().catch(() => {}); return null; }
-    const { record, period, index } = due;
+    const { subscription, period, index } = due;
+    const { record } = subscription;
 
     const lastId = period.record.paymentIds.at(-1);
     const last = lastId ? await readPhisPayment(this.pool, this.scope.siteId, lastId, this.scope.consumerAddonId) : null;
-    if (last && (last.record.reconciliationRequired || (last.record.status !== "captured" && !ENDED_PAYMENT.includes(last.record.status)))) {
+    if (last && (has(last.record.flags, PhisPaymentFlag.ReconciliationRequired) || (last.record.status !== "captured" && !ENDED_PAYMENT.includes(last.record.status)))) {
       const profile = await readPhisPaymentProfile(this.pool, this.scope.siteId, record.profileKey);
       if (profile) await this.reconcile(last, profile).catch(() => {});
       return null;
     }
     const needsCustomer = () => withPoolTransaction(this.pool, async db => {
-      const subscription = await readPhisPaymentSubscription(db, this.scope.siteId, subscriptionId, this.scope.consumerAddonId, true);
-      if (!subscription || subscription.record.version !== record.version) return;
-      const deadline = phisPaymentDunningDeadline(new Date(period.record.startsAt), record.dunning);
-      if (deadline <= now) { await this.exhaustSubscriptionPeriod(db, subscription, index, now); return; }
-      Object.assign(subscription.record, { status: "past_due", customerActionRequired: true, nextChargeAt: deadline.toISOString() });
-      subscription.record.version += 1;
-      await writePhisPaymentSubscription(db, subscription, index, this.entitlementListeners);
+      const current = await readPhisPaymentSubscription(db, this.scope.siteId, subscriptionId, this.scope.consumerAddonId, true);
+      if (!current || current.record.version !== record.version) return;
+      const graceEndsAt = new Date(period.record.graceEndsAt);
+      if (graceEndsAt <= now) { await this.failSubscriptionPeriod(db, current, index, now); return; }
+      Object.assign(current.record, { status: "past_due", nextChargeAt: graceEndsAt.toISOString() });
+      current.record.flags |= PhisPaymentSubscriptionFlag.CustomerActionRequired;
+      current.record.version += 1;
+      await writePhisPaymentSubscription(db, current, index, this.entitlementListeners);
     });
     try {
       if (!record.storedMethodId) throw new PhisPaymentError("stored_method_unavailable");
       await this.chargeStoredMethod({ storedMethodId: record.storedMethodId, reference: `${record.reference}#${index}`,
         idempotencyKey: `subscription:${record.id}:${index}:${period.attempts + 1}`, amount: period.record.amount, pricing: record.recurring.pricing,
-        description: record.recurring.description, initiator: "schedule", subscription: { subscriptionId: record.id, periodIndex: index } });
+        description: record.recurring.description, initiator: "schedule", subscription: { subscriptionId: record.id, periodIndex: index },
+        ...this.subscriptionDocuments(subscription) });
     } catch (error) {
       if (error instanceof PhisPaymentError && error.code === "stored_method_unavailable") await needsCustomer();
       /*
@@ -950,14 +1194,314 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
     return null;
   }
 
-  /** The time allowed for a period has run out: it has failed, and the policy says what follows. */
-  private async exhaustSubscriptionPeriod(db: PoolClient, subscription: PhisStoredPaymentSubscription, index: number, now: Date) {
+  /** The grace of an unpaid period has ended: the period has failed, and the subscription ends (in every mode). */
+  private async failSubscriptionPeriod(db: PoolClient, subscription: PhisStoredPaymentSubscription, index: number, now: Date) {
     const period = await readPhisPaymentSubscriptionPeriod(db, subscription.record.id, index, true);
     if (period && period.record.status === "open") { period.record.status = "failed"; await writePhisPaymentSubscriptionPeriod(db, period); }
-    if (subscription.record.dunning.onExhausted === "cancel") { await this.endSubscription(db, subscription, now); return; }
-    Object.assign(subscription.record, { status: "unpaid", nextChargeAt: null });
-    subscription.record.version += 1;
-    await writePhisPaymentSubscription(db, subscription, index, this.entitlementListeners);
+    await this.endSubscription(db, subscription, now);
+  }
+
+  // ---- changes of terms (PAYMENTS.md, changes) ----
+
+  /** A change request normalized against the subscription it changes: what stays, stays as it is. */
+  private validateChangeRequest(input: PhisPaymentSubscriptionChangeRequest, record: PhisPaymentSubscription) {
+    if (!input || typeof input !== "object" || (input.timing !== "now" && input.timing !== "period-end")) throw new PhisPaymentError("invalid_input");
+    const interval = input.interval === undefined ? structuredClone(record.interval) : validatePhisPaymentInterval(input.interval);
+    const recurring = this.validateTerms(input.recurring);
+    if (recurring.amount.currency !== record.recurring.amount.currency) throw new PhisPaymentError("invalid_input");
+    const graceDays = validatePhisPaymentDays(input.graceDays === undefined ? record.graceDays : input.graceDays, interval, PHIS_PAYMENT_GRACE_MAX_DAYS);
+    let leadDays: number | null = null;
+    if (record.collection.mode === "payment-request") {
+      leadDays = validatePhisPaymentDays(input.leadDays === undefined ? record.collection.leadDays : input.leadDays, interval, PHIS_PAYMENT_LEAD_MAX_DAYS);
+    } else if (input.leadDays !== undefined) throw new PhisPaymentError("invalid_input");
+    // The retries of `automatic` lie within the grace, the new one as much as the old.
+    if (record.collection.mode === "automatic" && record.collection.dunning.retryAfterDays.some(days => days > graceDays)) throw new PhisPaymentError("invalid_input");
+    let oneTime: PhisPaymentSubscriptionTerms | null = null;
+    if (input.oneTime !== undefined && input.oneTime !== null) {
+      if (input.timing !== "now") throw new PhisPaymentError("invalid_input");
+      oneTime = this.validateTerms(input.oneTime);
+      if (oneTime.amount.currency !== recurring.amount.currency) throw new PhisPaymentError("invalid_input");
+    }
+    return { timing: input.timing, interval, recurring, graceDays, leadDays, oneTime };
+  }
+
+  /**
+   * The unused share of what was paid ahead at `at`: every paid period that has not ended by then -- the
+   * running one, and under `payment-request` a requested one paid early -- each by `phisPaymentUnusedShare`
+   * of what it was charged under less what was refunded of its payment.
+   */
+  private async unusedCredit(db: Pick<PoolClient, "query">, subscription: PhisStoredPaymentSubscription, at: Date): Promise<bigint> {
+    const { record } = subscription;
+    if (!record.period) return BigInt(0);
+    let credit = BigInt(0);
+    for (let index = record.period.index; index >= 0 && index >= record.period.index - 1; index -= 1) {
+      const period = await readPhisPaymentSubscriptionPeriod(db, record.id, index);
+      if (!period || period.record.status !== "paid" || new Date(period.record.endedEarlyAt ?? period.record.endsAt) <= at) break;
+      // Period 0 was paid under `first`, which may hold a one-time part; what counts is the recurring amount of then.
+      const base = BigInt(index === 0 ? (subscription.request as { recurring: PhisPaymentSubscriptionTerms }).recurring.amount.minor : period.record.amount.minor);
+      const payment = period.record.paymentIds.length ? await readPhisPayment(db, this.scope.siteId, period.record.paymentIds.at(-1)!) : null;
+      const refunded = BigInt(payment?.record.refundedMinor ?? "0");
+      const paid = base > refunded ? base - refunded : BigInt(0);
+      credit += phisPaymentUnusedShare(paid, new Date(period.record.startsAt), new Date(period.record.endsAt), at);
+      if (new Date(period.record.startsAt) <= at) break;
+    }
+    return credit;
+  }
+
+  /** Whether the subscription may change now: active, not ending, nothing pending and no period open. */
+  private async requireChangeable(db: Pick<PoolClient, "query">, subscription: PhisStoredPaymentSubscription) {
+    const { record } = subscription;
+    if (record.status !== "active" || !record.period || has(record.flags, PhisPaymentSubscriptionFlag.CancelAtPeriodEnd) || record.pendingChange) {
+      throw new PhisPaymentError("invalid_state");
+    }
+    const open = await readPhisPaymentSubscriptionPeriod(db, record.id, record.period.index + 1);
+    if (open?.record.status === "open") throw new PhisPaymentError("invalid_state");
+  }
+
+  /** What a change would cost at `at`, by the one rule (`PhisPaymentSubscriptionChangeQuote`). */
+  private async quote(db: Pick<PoolClient, "query">, subscription: PhisStoredPaymentSubscription, change: ReturnType<PhisPaymentEngine["validateChangeRequest"]>, at: Date): Promise<PhisPaymentSubscriptionChangeQuote> {
+    await this.requireChangeable(db, subscription);
+    const { record } = subscription;
+    const currency = record.recurring.amount.currency;
+    const zero = { currency, minor: "0" };
+    // Under `automatic` the next periods are charged to the stored method, which bounds what they may carry.
+    if (record.collection.mode === "automatic" && record.storedMethodId) {
+      const method = await readPhisPaymentStoredMethod(db, this.scope.siteId, record.storedMethodId, this.scope.consumerAddonId);
+      if (!method?.features.stored || !phisPaymentMethodSupports(method.features.stored.pricing, phisPaymentPricingSelector(change.recurring.pricing))) {
+        throw new PhisPaymentError("unsupported_operation");
+      }
+    }
+    if (change.timing === "period-end") {
+      const startsAt = new Date(record.period!.endsAt);
+      return { timing: "period-end", effectiveAt: startsAt.toISOString(), credit: zero, charge: { ...change.recurring.amount }, due: zero,
+        period: { startsAt: startsAt.toISOString(), endsAt: addPhisPaymentIntervals(startsAt, change.interval, 1).toISOString() } };
+    }
+    const credit = await this.unusedCredit(db, subscription, at);
+    const charge = BigInt(change.recurring.amount.minor) + BigInt(change.oneTime?.amount.minor ?? "0");
+    // A credit beyond the new period is a downgrade, which goes at the period end; no balance is kept.
+    if (credit > charge) throw new PhisPaymentError("invalid_input");
+    requirePhisPaymentMinor(charge.toString());
+    return { timing: "now", effectiveAt: at.toISOString(), credit: { currency, minor: credit.toString() }, charge: { currency, minor: charge.toString() },
+      due: { currency, minor: (charge - credit).toString() },
+      period: { startsAt: at.toISOString(), endsAt: addPhisPaymentIntervals(at, change.interval, 1).toISOString() } };
+  }
+
+  async previewSubscriptionChange(input: PhisPaymentSubscriptionChangeRequest): Promise<PhisPaymentSubscriptionChangeQuote> {
+    const found = await this.subscription(input?.subscriptionId, "subscription-change");
+    if (!found) throw new PhisPaymentError("not_found");
+    return this.quote(this.pool, found.subscription, this.validateChangeRequest(input, found.subscription.record), new Date());
+  }
+
+  /**
+   * The pricing of a change's `due`: the new period's and the one-time part's, less the credit as a stated
+   * discount, so that a policy with line items states what is paid; `final`/`none` where neither has lines.
+   */
+  private duePricing(recurring: PhisPaymentSubscriptionTerms, oneTime: PhisPaymentSubscriptionTerms | null, credit: string): PhisPaymentPricing {
+    const lined = "lineItems" in recurring.pricing;
+    if (oneTime && ("lineItems" in oneTime.pricing) !== lined) throw new PhisPaymentError("invalid_input");
+    if (!("lineItems" in recurring.pricing)) return { basis: "final", tax: "none" };
+    const base = recurring.pricing;
+    const once = oneTime && "lineItems" in oneTime.pricing ? oneTime.pricing : null;
+    if (once && (once.basis !== base.basis || once.tax !== base.tax || once.shipping !== null)) throw new PhisPaymentError("invalid_input");
+    return {
+      basis: base.basis, tax: base.tax, promotionCodes: base.promotionCodes, customer: base.customer, shipping: base.shipping,
+      lineItems: [...base.lineItems, ...(once?.lineItems ?? []).map(line => ({ ...line, reference: `once:${line.reference}` }))],
+      discounts: [...base.discounts, ...(once?.discounts ?? []).map(discount => ({ ...discount, reference: `once:${discount.reference}` })),
+        ...(credit !== "0" ? [{ reference: "subscription-credit", label: "Credit for the unused part of the current period", minor: credit }] : [])],
+    };
+  }
+
+  /** In the payment's reservation: the change knows its payment from the transaction that created it. */
+  private async linkChangePayment(db: PoolClient, link: PeriodLink, paymentId: string) {
+    const change = await readPhisPaymentSubscriptionChange(db, link.subscriptionId, link.changeId!, true);
+    if (!change || change.record.status !== "awaiting_payment" || (change.record.paymentId !== null && change.record.paymentId !== paymentId)) throw new PhisPaymentError("invalid_state");
+    if (change.record.paymentId === paymentId) return;
+    change.record.paymentId = paymentId; change.record.version += 1;
+    await writePhisPaymentSubscriptionChange(db, change);
+    const subscription = (await readPhisPaymentSubscription(db, this.scope.siteId, link.subscriptionId, null, true))!;
+    if (subscription.record.pendingChange?.id === change.record.id) {
+      subscription.record.pendingChange = change.record;
+      await writePhisPaymentSubscription(db, subscription, null, this.entitlementListeners, { changeId: change.record.id });
+    }
+  }
+
+  /**
+   * A change taking effect now, at `at`: the paid period ends there (`endedEarlyAt`), a new term starts with
+   * a paid period under the new terms, and the renewal or request date moves to its end.
+   */
+  private async applyChangeNow(db: PoolClient, subscription: PhisStoredPaymentSubscription, change: PhisStoredPaymentSubscriptionChange, at: Date, payment: PhisStoredPayment | null) {
+    const { record } = subscription;
+    const index = record.period!.index + 1;
+    for (let earlier = record.period!.index; earlier >= 0 && earlier >= record.period!.index - 1; earlier -= 1) {
+      const period = await readPhisPaymentSubscriptionPeriod(db, record.id, earlier, true);
+      if (!period || period.record.status !== "paid" || new Date(period.record.endsAt) <= at || period.record.endedEarlyAt) break;
+      period.record.endedEarlyAt = at.toISOString();
+      await writePhisPaymentSubscriptionPeriod(db, period);
+    }
+    this.takeTerms(subscription, change.record, at.toISOString(), index);
+    const endsAt = addPhisPaymentIntervals(at, record.interval, 1).toISOString();
+    await ensurePhisPaymentSubscriptionPeriod(db, { subscriptionId: record.id, index, startsAt: at.toISOString(), endsAt, amount: { ...change.record.recurring.amount },
+      status: "paid", paymentIds: payment ? [payment.record.id] : [], requestedAt: null, graceEndsAt: addPhisPaymentDays(at, record.graceDays).toISOString(),
+      changeId: change.record.id, endedEarlyAt: null });
+    Object.assign(record, { status: "active", period: { index, startsAt: at.toISOString(), endsAt }, nextChargeAt: this.nextAfterPaid(record, endsAt), pendingChange: null });
+    record.flags &= ~PhisPaymentSubscriptionFlag.CustomerActionRequired;
+    // The payment of `due` stored the method anew under `automatic`: the subscription is charged to it from now on.
+    if (record.collection.mode === "automatic" && payment?.record.storedMethodId) record.storedMethodId = payment.record.storedMethodId;
+    Object.assign(change.record, { status: "applied", effectiveAt: at.toISOString(), periodIndex: index });
+    change.record.version += 1;
+    await writePhisPaymentSubscriptionChange(db, change);
+    record.version += 1;
+    await writePhisPaymentSubscription(db, subscription, index, this.entitlementListeners, { changeId: change.record.id });
+  }
+
+  /** What the payment of a change's `due` means for it: captured, it is applied; ended unpaid, it is void. */
+  private async settleChangePayment(db: PoolClient, subscription: PhisStoredPaymentSubscription, change: PhisStoredPaymentSubscriptionChange, payment: PhisStoredPayment) {
+    if (change.record.status !== "awaiting_payment") return;
+    if (payment.record.status === "captured" && subscription.record.status === "active" && subscription.record.pendingChange?.id === change.record.id) {
+      await this.applyChangeNow(db, subscription, change, new Date(), payment);
+    } else if (ENDED_PAYMENT.includes(payment.record.status)) {
+      const changeId = await this.voidPendingChange(db, subscription);
+      if (!changeId) { change.record.status = "void"; change.record.version += 1; await writePhisPaymentSubscriptionChange(db, change); }
+      subscription.record.version += 1;
+      await writePhisPaymentSubscription(db, subscription, null, this.entitlementListeners, { changeId: change.record.id });
+    }
+  }
+
+  private async changeResult(change: PhisStoredPaymentSubscriptionChange): Promise<PhisPaymentSubscriptionChangeResult> {
+    const subscription = (await readPhisPaymentSubscription(this.pool, this.scope.siteId, change.record.subscriptionId, this.scope.consumerAddonId))!;
+    const current = (await readPhisPaymentSubscriptionChange(this.pool, change.record.subscriptionId, change.record.id))!;
+    const payment = current.record.paymentId ? await this.resumePaymentOf(current.record.paymentId) : null;
+    return { subscription: subscription.record, change: current.record, payment };
+  }
+
+  /** The payment of a change's `due` with its create operation, as `create` would answer it again. */
+  private async resumePaymentOf(paymentId: string): Promise<PhisPaymentCommandResult | null> {
+    const operations = await listPhisPaymentOperations(this.pool, paymentId);
+    const created = operations.find(operation => operation.record.action === "create");
+    return created ? this.resume(created.record.id) : null;
+  }
+
+  async changeSubscription(input: Parameters<PhisPaymentsCapabilityV1["changeSubscription"]>[0]): Promise<PhisPaymentSubscriptionChangeResult> {
+    input = structuredClone(input);
+    requirePhisPaymentReference(input?.reference); requirePhisPaymentReference(input.idempotencyKey);
+    // The payment of `due` is referenced as `<subscription>~<change>`, which has to stay a reference itself.
+    if (input.reference.length > 40) throw new PhisPaymentError("invalid_input");
+    validatePhisPaymentMoney(input.expectedDue, false);
+    const found = await this.subscription(input.subscriptionId, "subscription-change");
+    if (!found) throw new PhisPaymentError("not_found");
+    const change = this.validateChangeRequest(input, found.subscription.record);
+    let checkout: { methodKey: string | null; checkoutKind: "redirect"; returnPath: string; expiresAt: string | null } | null = null;
+    if (change.timing === "now") {
+      if (!input.checkout) throw new PhisPaymentError("invalid_input");
+      this.validateFlow("automatic", input.checkout.checkoutKind);
+      if (input.checkout.methodKey !== null && (typeof input.checkout.methodKey !== "string" || input.checkout.methodKey.length > 255)) throw new PhisPaymentError("invalid_input");
+      checkout = { methodKey: input.checkout.methodKey, checkoutKind: "redirect", returnPath: input.checkout.returnPath, expiresAt: validatePhisPaymentExpiresAt(input.checkout.expiresAt) };
+    }
+    const request = { subscriptionId: input.subscriptionId, reference: input.reference, ...change, expectedDue: { currency: input.expectedDue.currency, minor: input.expectedDue.minor }, checkout };
+    const previous = await withPoolTransaction(this.pool, db => findPhisPaymentSubscriptionChangeIdempotency(db, this.scope, input.idempotencyKey));
+    if (previous) {
+      if (!isDeepStrictEqual(previous.request, request)) throw new PhisPaymentError("idempotency_conflict");
+      return this.changeResult(previous);
+    }
+    const at = new Date();
+    const quoted = await this.quote(this.pool, found.subscription, change, at);
+    if (quoted.due.currency !== input.expectedDue.currency) throw new PhisPaymentError("invalid_input");
+    if (BigInt(quoted.due.minor) > BigInt(input.expectedDue.minor)) throw new PhisPaymentError("quote_outdated");
+    const paying = change.timing === "now" && quoted.due.minor !== "0";
+    const stored: PhisStoredPaymentSubscriptionChange = {
+      siteId: this.scope.siteId, consumerAddonId: this.scope.consumerAddonId, request,
+      record: { id: randomUUID(), subscriptionId: found.subscription.record.id, reference: input.reference, timing: change.timing,
+        status: change.timing === "period-end" ? "scheduled" : paying ? "awaiting_payment" : "applied",
+        interval: change.interval, recurring: change.recurring, graceDays: change.graceDays, leadDays: change.leadDays,
+        credit: quoted.credit, charge: quoted.charge, due: quoted.due, effectiveAt: null, paymentId: null, periodIndex: null,
+        createdAt: at.toISOString(), version: 1 },
+    };
+    const raced = await withPoolTransaction(this.pool, async db => {
+      const existing = await findPhisPaymentSubscriptionChangeIdempotency(db, this.scope, input.idempotencyKey);
+      if (existing) { if (!isDeepStrictEqual(existing.request, request)) throw new PhisPaymentError("idempotency_conflict"); return existing; }
+      const current = (await readPhisPaymentSubscription(db, this.scope.siteId, found.subscription.record.id, this.scope.consumerAddonId, true))!;
+      // Quoted outside the lock: anything that moved since asks for a new quote.
+      if (current.record.version !== found.subscription.record.version) throw new PhisPaymentError("quote_outdated");
+      await this.requireChangeable(db, current);
+      const applied = stored.record.status === "applied";
+      if (applied) stored.record.status = "awaiting_payment";
+      if (!await insertPhisPaymentSubscriptionChange(db, stored, input.idempotencyKey)) throw new PhisPaymentError("idempotency_conflict");
+      if (applied) { await this.applyChangeNow(db, current, stored, at, null); return null; }
+      current.record.pendingChange = stored.record;
+      current.record.version += 1;
+      await writePhisPaymentSubscription(db, current, null, this.entitlementListeners, { changeId: stored.record.id });
+      return null;
+    });
+    if (raced) return this.changeResult(raced);
+    if (!paying) { await this.options.afterCommit?.().catch(() => {}); return this.changeResult(stored); }
+    const { record } = found.subscription;
+    try {
+      await this.createPayment({ profileKey: record.profileKey, reference: `${record.reference}~${input.reference}`, idempotencyKey: `subscription-change:${stored.record.id}`,
+        amount: quoted.due, pricing: this.duePricing(change.recurring, change.oneTime, quoted.credit.minor), description: change.recurring.description, captureMode: "automatic",
+        methodKey: checkout!.methodKey, checkoutKind: checkout!.checkoutKind, returnPath: checkout!.returnPath, expiresAt: checkout!.expiresAt,
+        store: record.collection.mode === "automatic" ? { payerReference: record.payerReference } : null, ...this.subscriptionDocuments(found.subscription) },
+      { subscriptionId: record.id, periodIndex: record.period!.index + 1, changeId: stored.record.id });
+    } catch (error) {
+      // No payment came to exist, or none that can be paid: the change is void and nothing changed.
+      await withPoolTransaction(this.pool, async db => {
+        const current = (await readPhisPaymentSubscription(db, this.scope.siteId, record.id, this.scope.consumerAddonId, true))!;
+        const pending = await readPhisPaymentSubscriptionChange(db, record.id, stored.record.id, true);
+        if (pending?.record.status === "awaiting_payment" && pending.record.paymentId === null) {
+          await this.voidPendingChange(db, current);
+          current.record.version += 1;
+          await writePhisPaymentSubscription(db, current, null, this.entitlementListeners, { changeId: stored.record.id });
+        }
+      });
+      await this.options.afterCommit?.().catch(() => {});
+      throw error;
+    }
+    return this.changeResult(stored);
+  }
+
+  async cancelSubscriptionChange(input: Parameters<PhisPaymentsCapabilityV1["cancelSubscriptionChange"]>[0]): Promise<PhisPaymentSubscriptionChange | null> {
+    requirePhisPaymentReference(input?.changeId);
+    const found = await this.subscription(input.subscriptionId, "subscription-change");
+    if (!found) return null;
+    const result = await withPoolTransaction(this.pool, async db => {
+      const current = (await readPhisPaymentSubscription(db, this.scope.siteId, input.subscriptionId, this.scope.consumerAddonId, true))!;
+      const change = await readPhisPaymentSubscriptionChange(db, input.subscriptionId, input.changeId, true);
+      if (!change) return null;
+      if (change.record.status !== "scheduled" && change.record.status !== "awaiting_payment") return { change: change.record, paymentId: null };
+      const paymentId = change.record.paymentId;
+      if (current.record.pendingChange?.id === change.record.id) await this.voidPendingChange(db, current);
+      else { change.record.status = "void"; change.record.version += 1; await writePhisPaymentSubscriptionChange(db, change); }
+      current.record.version += 1;
+      await writePhisPaymentSubscription(db, current, null, this.entitlementListeners, { changeId: change.record.id });
+      return { change: (await readPhisPaymentSubscriptionChange(db, input.subscriptionId, input.changeId))!.record, paymentId };
+    });
+    // Its checkout is ended where the method can be cancelled; what is paid anyway is the consumer's to refund.
+    if (result?.paymentId) await this.mutate("cancel", { paymentId: result.paymentId, idempotencyKey: `subscription-change:${input.changeId}:cancel` }, true).catch(() => {});
+    await this.options.afterCommit?.().catch(() => {});
+    return result?.change ?? null;
+  }
+
+  async listSubscriptionChanges(subscriptionId: string): Promise<readonly PhisPaymentSubscriptionChange[]> {
+    if (!await this.subscription(subscriptionId, "subscription-change")) return [];
+    return listPhisPaymentSubscriptionChanges(this.pool, subscriptionId);
+  }
+
+  async subscriptionCredit(subscriptionId: string): Promise<{ credit: PhisPaymentMoney; at: string; periodIndex: number } | null> {
+    const found = await this.subscription(subscriptionId, "subscription-change");
+    const record = found?.subscription.record;
+    if (!found || !record?.period || record.status === "pending" || record.status === "canceled") return null;
+    const at = new Date();
+    const credit = await this.unusedCredit(this.pool, found.subscription, at);
+    return { credit: { currency: record.recurring.amount.currency, minor: credit.toString() }, at: at.toISOString(), periodIndex: record.period.index };
+  }
+
+  /**
+   * What a payment and its refunds settled, oldest first: under the grant `settlement-read`, and only for an
+   * acting user with the Site role Admin or Accountant -- never a Shop clerk or the customer.
+   */
+  async listSettlements(paymentId: string): Promise<readonly PhisPaymentSettlement[]> {
+    if (this.options.unauthenticated || !await this.options.billingStaff?.()) throw new PhisPaymentError("forbidden");
+    const found = await this.persisted(paymentId, "settlement-read");
+    return found ? listPhisPaymentSettlements(this.pool, this.scope.siteId, found.payment.record.id) : [];
   }
 
   private async checkProfileRevision(db: PoolClient, expected: PhisPaymentProfile, action: PhisPaymentGrantedOperation) {
@@ -970,34 +1514,39 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
   capture(input: MutationInput & { minor: string }) { return this.mutate("capture", input); }
   refund(input: MutationInput & { minor: string; reason: string }) { return this.mutate("refund", input); }
 
-  private async mutate(action: MutationAction, input: MutationInput): Promise<PhisPaymentCommandResult> {
+  /**
+   * `core`: Core's own act on a payment it made for a subscription (a change's checkout it ends), under no
+   * consumer's merchant policy; every rule of the payment itself still holds.
+   */
+  private async mutate(action: MutationAction, input: MutationInput, core = false): Promise<PhisPaymentCommandResult> {
     input = structuredClone(input);
     requirePhisPaymentReference(input.paymentId); requirePhisPaymentReference(input.idempotencyKey);
     if (action === "capture" || action === "refund") requirePhisPaymentMinor(input.minor, true);
     if (action === "refund" && (typeof input.reason !== "string" || input.reason.length > 500)) throw new PhisPaymentError("invalid_input");
-    const found = await this.persisted(input.paymentId, action);
+    const found = core ? await this.persisted(input.paymentId, "read") : await this.persisted(input.paymentId, action);
     if (!found) throw new PhisPaymentError("not_found");
     const request = { paymentId: input.paymentId, ...(action === "capture" || action === "refund" ? { minor: input.minor } : {}), ...(action === "refund" ? { reason: input.reason } : {}) };
     const result = await withPoolTransaction(this.pool, async db => {
       const previous = await findPhisPaymentIdempotency(db, this.scope, action, input.idempotencyKey);
       if (previous) { if (!isDeepStrictEqual(previous.request, request)) throw new PhisPaymentError("idempotency_conflict"); return { previous }; }
-      await this.checkProfileRevision(db, found.profile, action);
+      await this.checkProfileRevision(db, found.profile, core ? "read" : action);
       const payment = (await readPhisPayment(db, this.scope.siteId, input.paymentId, this.scope.consumerAddonId, true))!;
       const operations = await listPhisPaymentOperations(db, input.paymentId);
-      if (payment.record.reconciliationRequired || operations.some(o => ["reserved", "indeterminate"].includes(o.record.state))) throw new PhisPaymentError("reconciliation_required");
+      if (has(payment.record.flags, PhisPaymentFlag.ReconciliationRequired) || operations.some(o => ["reserved", "indeterminate"].includes(o.record.state))) throw new PhisPaymentError("reconciliation_required");
       if (!payment.binding || !await claimPhisPayment(db, payment)) throw new PhisPaymentError("invalid_state");
       const minor = input.minor;
-      if (action === "cancel" && !payment.features.canCancel) throw new PhisPaymentError("unsupported_operation");
+      const features = payment.features.flags;
+      if (action === "cancel" && !has(features, PhisPaymentFeatureFlag.Cancel)) throw new PhisPaymentError("unsupported_operation");
       if (action === "capture" && !payment.features.captureModes.includes("manual")) throw new PhisPaymentError("unsupported_operation");
-      if (action === "capture" && !payment.features.canPartialCapture && input.minor !== payment.record.authorizedMinor) throw new PhisPaymentError("unsupported_operation");
-      if (action === "refund" && !payment.features.canRefund) throw new PhisPaymentError("unsupported_operation");
+      if (action === "capture" && !has(features, PhisPaymentFeatureFlag.PartialCapture) && input.minor !== payment.record.authorizedMinor) throw new PhisPaymentError("unsupported_operation");
+      if (action === "refund" && !has(features, PhisPaymentFeatureFlag.Refund)) throw new PhisPaymentError("unsupported_operation");
 
       if (action === "capture" && (payment.record.captureMode !== "manual" || payment.record.status !== "authorized" || BigInt(minor!) > BigInt(payment.record.authorizedMinor))) throw new PhisPaymentError("invalid_state");
       if (action === "cancel" && !["awaiting_customer", "authorized"].includes(payment.record.status)) throw new PhisPaymentError("invalid_state");
       const refunds = await listPhisPaymentRefunds(db, input.paymentId);
       if (action === "refund") {
         const reserved = refunds.filter(r => ["pending", "succeeded"].includes(r.record.status)).reduce((sum, r) => sum + BigInt(r.record.amount.minor), BigInt(0));
-        if (!payment.features.canPartialRefund && BigInt(minor!) !== BigInt(payment.record.capturedMinor) - reserved) throw new PhisPaymentError("unsupported_operation");
+        if (!has(features, PhisPaymentFeatureFlag.PartialRefund) && BigInt(minor!) !== BigInt(payment.record.capturedMinor) - reserved) throw new PhisPaymentError("unsupported_operation");
         if (payment.record.status !== "captured" || reserved + BigInt(minor!) > BigInt(payment.record.capturedMinor)) throw new PhisPaymentError("invalid_state");
       }
       const operationId = randomUUID();
@@ -1011,7 +1560,7 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
         binding: null, operationId,
       } : null;
       if (refund) await writePhisPaymentRefund(db, refund);
-      payment.record.reconciliationRequired = true; payment.record.version += 1;
+      payment.record.flags |= PhisPaymentFlag.ReconciliationRequired; payment.record.version += 1;
       // Write reservation facts without releasing the claim that protects the following external call.
       await writePhisPayment(db, payment, { operationId, refundId: refund?.record.id ?? null });
       await claimPhisPayment(db, payment);
@@ -1178,7 +1727,8 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       }
       for (const op of operations) await writePhisPaymentOperation(db, op);
       for (const refund of refunds) await writePhisPaymentRefund(db, refund);
-      payment.record.reconciliationRequired = operations.some(o => ["reserved", "indeterminate"].includes(o.record.state));
+      if (operations.some(o => ["reserved", "indeterminate"].includes(o.record.state))) payment.record.flags |= PhisPaymentFlag.ReconciliationRequired;
+      else payment.record.flags &= ~PhisPaymentFlag.ReconciliationRequired;
       const reportedMethod = (result.outcome === "applied" || result.outcome === "pending") && result.observation.storedMethod
         ? validatePhisPaymentProviderStoredMethod(result.observation.storedMethod) : null;
       // The method is part of what the consumer is told changed: it may become active after the capture.
@@ -1187,6 +1737,16 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       const changed = methodChanged || !isDeepStrictEqual(before, comparable) || !isDeepStrictEqual(beforeOperations, operations.map(o => o.record)) || !isDeepStrictEqual(beforeRefunds, refunds.map(r => r.record));
       if (changed) payment.record.version += 1;
       await writePhisPayment(db, payment, changed ? { operationId, refundId: changedRefundId } : null);
+      // What the Provider documents and settles for a capture or a succeeded refund is collected after it,
+      // by the job, from a task written with the fact (PAYMENTS.md, records).
+      const captured = before.status !== "captured" && payment.record.status === "captured";
+      const refunded = refunds.filter(r => r.record.status === "succeeded" && beforeRefunds.find(b => b.id === r.record.id)?.status !== "succeeded");
+      if (captured || refunded.length > 0) {
+        await enqueuePhisPaymentRecordTasks(db, payment, [...(captured ? [null] : []), ...refunded.map(r => r.record.id)], {
+          documents: !!payment.features.documents?.kinds.some(kind => has(kind.flags, PhisPaymentDocumentFeatureFlag.Fetchable)),
+          settlements: has(payment.features.currency.flags, PhisPaymentCurrencyFeatureFlag.SettlementRecords),
+        });
+      }
       // In the payment's own transaction: the period is paid exactly when the payment says it is.
       if (payment.record.subscriptionId) await this.settleSubscriptionPayment(db, payment, operation?.record.errorCode ?? null);
       if (receipt) await finishPhisPaymentReceipt(db, payment.siteId, receipt);

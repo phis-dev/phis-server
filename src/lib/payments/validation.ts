@@ -3,8 +3,12 @@ import type {
   PhisPayment, PhisPaymentAddition, PhisPaymentCustomerDetails, PhisPaymentErrorCode, PhisPaymentMoney, PhisPaymentObservedTotals,
   PhisPaymentMerchantOfRecordFeatures, PhisPaymentPricing, PhisPaymentPricingFeatures, PhisPaymentPricingSelector, PhisPaymentProfileDraft, PhisPaymentProviderObservation,
   PhisPaymentProviderProbe, PhisPaymentProviderStoredMethod, PhisPaymentStoredFeatures, PhisPaymentTotals, PhisPaymentCheckoutExpiryFeatures,
+  PhisPaymentCollectionFeatures, PhisPaymentCurrencyFeatures, PhisPaymentDocumentFeatures, PhisPaymentIntervalFeatures, PhisPaymentScheduleFeatures,
 } from "@phis/contracts/payments";
-import { PHIS_PAYMENT_CURRENCY_EXPONENTS } from "@phis/contracts/payments";
+import {
+  PHIS_PAYMENT_CURRENCY_EXPONENTS, PhisPaymentAdditionFlag, PhisPaymentCurrencyFeatureFlag, PhisPaymentDocumentFeatureFlag, PhisPaymentFeatureFlag,
+  PhisPaymentPricingFeatureFlag, PhisPaymentScheduleFeatureFlag, PhisPaymentStoredFeatureFlag,
+} from "@phis/contracts/payments";
 import type { PhisAddonManifestV1 } from "@phis/contracts/addon";
 import {
   PHIS_PAYMENT_MAX_ADDITIONS, PHIS_PAYMENT_MAX_CHECKOUT_EXPIRY_SECONDS, PHIS_PAYMENT_MAX_DISCOUNTS, PHIS_PAYMENT_MAX_LINE_ITEMS,
@@ -58,15 +62,23 @@ export function validatePhisPaymentProviderProbe(value: PhisPaymentProviderProbe
         || !features || !Array.isArray(features.captureModes) || features.captureModes.length > 2
         || features.captureModes.some((m: string) => m !== "automatic" && m !== "manual")
         || !Array.isArray(features.checkoutKinds) || features.checkoutKinds.length > 2
-        || features.checkoutKinds.some((k: string) => k !== "redirect" && k !== "provider-ui")
-        || ["canPartialCapture", "canCancel", "canRefund", "canPartialRefund"].some(k => typeof features[k as keyof typeof features] !== "boolean")) throw new Error();
+        || features.checkoutKinds.some((k: string) => k !== "redirect" && k !== "provider-ui")) throw new Error();
+      const flags = requireFlags(features.flags, PhisPaymentFeatureFlag.PartialCapture | PhisPaymentFeatureFlag.Cancel | PhisPaymentFeatureFlag.Refund | PhisPaymentFeatureFlag.PartialRefund);
+      // A partial refund is a refund: the one bit without the other says nothing a payment could do.
+      if ((flags & PhisPaymentFeatureFlag.PartialRefund) !== 0 && (flags & PhisPaymentFeatureFlag.Refund) === 0) throw new Error();
       keys.add(method.methodKey);
+      const stored = features.stored == null ? null : validateStoredFeatures(features.stored);
+      const collection = features.collection == null ? null : validateCollectionFeatures(features.collection);
+      // Charged without the customer means stored: a method that declares the one without the other cannot do it.
+      if (collection?.automatic && !stored) throw new Error();
       return { methodKey: method.methodKey, title: method.title, features: {
-        captureModes: [...features.captureModes], checkoutKinds: [...features.checkoutKinds], canPartialCapture: features.canPartialCapture,
-        canCancel: features.canCancel, canRefund: features.canRefund, canPartialRefund: features.canPartialRefund,
+        captureModes: [...features.captureModes], checkoutKinds: [...features.checkoutKinds], flags,
         pricing: validatePricingFeatures(features.pricing),
-        stored: features.stored == null ? null : validateStoredFeatures(features.stored),
+        stored,
         checkoutExpiry: features.checkoutExpiry == null ? null : validateCheckoutExpiryFeatures(features.checkoutExpiry),
+        collection,
+        currency: validateCurrencyFeatures(features.currency),
+        documents: features.documents == null ? null : validateDocumentFeatures(features.documents),
       } };
     });
     return { merchantIdentity: value.merchantIdentity, mode: value.mode, methods };
@@ -116,7 +128,7 @@ export function validatePhisPaymentProfileDraft(
       || Object.keys(grant).some(k => !["consumerAddonId", "operations", "merchantActions"].includes(k))
       || !Array.isArray(grant.operations) || grant.operations.length === 0 || new Set(grant.operations).size !== grant.operations.length
       || grant.operations.some((op: string) => !["read", "create", "complete", "refresh", "capture", "cancel", "refund", "method-store", "method-read", "method-remove",
-        "subscription-read", "subscription-create", "subscription-cancel"].includes(op))
+        "subscription-read", "subscription-create", "subscription-cancel", "subscription-change", "document-read", "settlement-read"].includes(op))
       || !grant.merchantActions || Object.keys(grant.merchantActions).some(k => !["capture", "cancel", "refund", ...OPTIONAL_MERCHANT_ACTIONS].includes(k))) return fail();
     owners.add(grant.consumerAddonId);
     // The three a payment has are required; the optional ones are checked where they are stated.
@@ -315,13 +327,93 @@ export function validatePhisPaymentExpiresAt(value: unknown): string | null {
 }
 
 function validateStoredFeatures(value: unknown): PhisPaymentStoredFeatures {
-  requireKeys(value, ["setup", "chargeResult", "expires", "perPayer", "pricing"], false);
+  requireKeys(value, ["setup", "chargeResult", "flags", "perPayer", "pricing"], false);
   requireList(value.setup, 2);
   for (const way of value.setup) requireOneOf(way, ["with-payment", "alone"]);
   requireOneOf(value.chargeResult, ["notified", "immediate"]); requireOneOf(value.perPayer, ["single", "many"]);
-  if (value.setup.length === 0 || new Set(value.setup).size !== value.setup.length || typeof value.expires !== "boolean") invalid();
-  return { setup: [...value.setup] as PhisPaymentStoredFeatures["setup"], chargeResult: value.chargeResult, expires: value.expires,
+  if (value.setup.length === 0 || new Set(value.setup).size !== value.setup.length) invalid();
+  return { setup: [...value.setup] as PhisPaymentStoredFeatures["setup"], chargeResult: value.chargeResult, flags: requireFlags(value.flags, PhisPaymentStoredFeatureFlag.Expires),
     perPayer: value.perPayer, pricing: validatePricingFeatures(value.pricing) };
+}
+
+const INTERVAL_UNITS = ["day", "week", "month", "year"] as const;
+/** The units and the longest period a collection mode runs; `maxDays` within Core's own longest period. */
+function validateIntervalFeatures(value: unknown): PhisPaymentIntervalFeatures {
+  requireKeys(value, ["units", "maxDays"], false);
+  requireList(value.units, INTERVAL_UNITS.length);
+  for (const unit of value.units) requireOneOf(unit, INTERVAL_UNITS);
+  if (value.units.length === 0 || new Set(value.units).size !== value.units.length
+    || (value.maxDays !== null && (!Number.isInteger(value.maxDays) || (value.maxDays as number) < 1 || (value.maxDays as number) > 5 * 366))) invalid();
+  return { units: [...value.units] as PhisPaymentIntervalFeatures["units"], maxDays: value.maxDays as number | null };
+}
+
+function validateScheduleFeatures(value: unknown): PhisPaymentScheduleFeatures {
+  const interval = validateIntervalFeatures(value);
+  requireKeys(value, ["units", "maxDays", "changes", "methodReplacement", "dunning", "flags"], false);
+  requireKeys(value.changes, ["timings", "proration"], false);
+  const changes = value.changes as { timings: unknown; proration: unknown };
+  requireList(changes.timings, 2); requireList(changes.proration, 2);
+  for (const timing of changes.timings) requireOneOf(timing, ["now", "period-end"]);
+  for (const proration of changes.proration) requireOneOf(proration, ["time-share", "none"]);
+  requireOneOf(value.methodReplacement, ["provider-page", "none"]);
+  if (value.dunning !== "provider") invalid();
+  return { ...interval, changes: { timings: [...changes.timings] as PhisPaymentScheduleFeatures["changes"]["timings"], proration: [...changes.proration] as PhisPaymentScheduleFeatures["changes"]["proration"] },
+    methodReplacement: value.methodReplacement, dunning: "provider",
+    flags: requireFlags(value.flags, PhisPaymentScheduleFeatureFlag.IntervalChange | PhisPaymentScheduleFeatureFlag.ChangedOutside) };
+}
+
+function validateCollectionFeatures(value: unknown): PhisPaymentCollectionFeatures {
+  requireKeys(value, ["automatic", "paymentRequest", "providerManaged"], false);
+  return {
+    automatic: value.automatic === null ? null : validateIntervalFeatures(value.automatic),
+    paymentRequest: value.paymentRequest === null ? null : validateIntervalFeatures(value.paymentRequest),
+    providerManaged: value.providerManaged === null ? null : validateScheduleFeatures(value.providerManaged),
+  };
+}
+
+function requireCurrencyCodes(value: unknown): string[] {
+  requireList(value, 200);
+  for (const code of value) if (typeof code !== "string" || !/^[A-Z]{3}$/.test(code)) invalid();
+  if (new Set(value).size !== value.length) invalid();
+  return [...value] as string[];
+}
+
+function validateCurrencyFeatures(value: unknown): PhisPaymentCurrencyFeatures {
+  requireKeys(value, ["amounts", "conversion", "conversionCurrencies", "conversionCost", "settlementCurrencies", "flags"], false);
+  requireOneOf(value.amounts, ["single", "per-currency"]); requireOneOf(value.conversion, ["none", "optional", "mandatory"]);
+  if (value.conversionCost !== null) requireOneOf(value.conversionCost, ["customer", "merchant"]);
+  const conversionCurrencies = requireCurrencyCodes(value.conversionCurrencies);
+  // Without a conversion there is nothing to offer it in and nobody to bear its cost.
+  if (value.conversion === "none" && (conversionCurrencies.length > 0 || value.conversionCost !== null)) invalid();
+  return { amounts: value.amounts, conversion: value.conversion, conversionCurrencies, conversionCost: value.conversionCost as PhisPaymentCurrencyFeatures["conversionCost"],
+    settlementCurrencies: requireCurrencyCodes(value.settlementCurrencies), flags: requireFlags(value.flags, PhisPaymentCurrencyFeatureFlag.SettlementRecords) };
+}
+
+function validateDocumentFeatures(value: unknown): PhisPaymentDocumentFeatures {
+  requireKeys(value, ["kinds", "issuer"], false);
+  requireList(value.kinds, 3);
+  const seen = new Set<string>();
+  const kinds = value.kinds.map(entry => {
+    requireKeys(entry, ["kind", "flags"], false);
+    requireOneOf(entry.kind, ["invoice", "receipt", "credit-note"]);
+    if (seen.has(entry.kind)) invalid();
+    seen.add(entry.kind);
+    return { kind: entry.kind, flags: requireFlags(entry.flags, PhisPaymentDocumentFeatureFlag.Fetchable | PhisPaymentDocumentFeatureFlag.Delayed) };
+  });
+  requireKeys(value.issuer, ["kind", "name", "taxId"], false);
+  const issuer = value.issuer as Record<string, unknown>;
+  requireOneOf(issuer.kind, ["merchant", "provider"]);
+  if (issuer.name !== null) requireText(issuer.name);
+  if (issuer.taxId !== null) requireText(issuer.taxId, 64);
+  // The Provider issuing in its own name says who it is; only the merchant is named by the profile.
+  if (issuer.kind === "provider" && issuer.name === null) invalid();
+  return { kinds, issuer: { kind: issuer.kind, name: issuer.name as string | null, taxId: issuer.taxId as string | null } };
+}
+
+/** A flags number with no bit beyond `allowed`; another bit is a declaration Core does not understand. */
+function requireFlags(value: unknown, allowed: number): number {
+  if (!Number.isInteger(value) || (value as number) < 0 || ((value as number) & ~allowed) !== 0) invalid();
+  return value as number;
 }
 
 /**
@@ -346,20 +438,20 @@ export function validatePhisPaymentProviderStoredMethod(value: unknown): PhisPay
 }
 
 function validatePricingFeatures(value: unknown): PhisPaymentPricingFeatures {
-  requireKeys(value, ["bases", "tax", "maxDiscounts", "promotionCodes", "collectsCustomerDetails", "collectsTaxIds"], false);
+  requireKeys(value, ["bases", "tax", "maxDiscounts", "promotionCodes", "flags"], false);
   requireList(value.bases, PRICING_BASES.length); requireList(value.tax, PRICING_TAX.length);
   for (const basis of value.bases) requireOneOf(basis, PRICING_BASES);
   for (const tax of value.tax) requireOneOf(tax, PRICING_TAX);
   if (!value.bases.includes("final") || !value.tax.includes("none") || new Set(value.bases).size !== value.bases.length || new Set(value.tax).size !== value.tax.length
-    || !Number.isInteger(value.maxDiscounts) || (value.maxDiscounts as number) < 0 || (value.maxDiscounts as number) > PHIS_PAYMENT_MAX_DISCOUNTS
-    || typeof value.collectsCustomerDetails !== "boolean" || typeof value.collectsTaxIds !== "boolean") invalid();
+    || !Number.isInteger(value.maxDiscounts) || (value.maxDiscounts as number) < 0 || (value.maxDiscounts as number) > PHIS_PAYMENT_MAX_DISCOUNTS) invalid();
+  const flags = requireFlags(value.flags, PhisPaymentPricingFeatureFlag.CollectsCustomerDetails | PhisPaymentPricingFeatureFlag.CollectsTaxIds);
   requireOneOf(value.promotionCodes, ["none", "alone", "with-discounts"]);
   // Present exactly when the method sells as Merchant of Record: a consumer offers no more than it states.
   const merchantOfRecord = value.tax.includes("merchant-of-record")
     ? validateMerchantOfRecordFeatures(value.merchantOfRecord)
     : value.merchantOfRecord === null ? null : invalid();
   return { bases: [...value.bases] as PhisPaymentPricingFeatures["bases"], tax: [...value.tax] as PhisPaymentPricingFeatures["tax"], maxDiscounts: value.maxDiscounts as number,
-    promotionCodes: value.promotionCodes, collectsCustomerDetails: value.collectsCustomerDetails, collectsTaxIds: value.collectsTaxIds, merchantOfRecord };
+    promotionCodes: value.promotionCodes, flags, merchantOfRecord };
 }
 
 /** Where and what a Provider sells as Merchant of Record: ISO countries, admitted categories, what a business's VAT id does. */
@@ -380,14 +472,16 @@ function validateMerchantOfRecordFeatures(value: unknown): PhisPaymentMerchantOf
 }
 
 function validateAddition(value: unknown): PhisPaymentAddition {
-  requireKeys(value, ["kind", "minor", "label", "inclusive", "rate", "jurisdiction", "collectedBy", "code"], false);
+  requireKeys(value, ["kind", "minor", "label", "flags", "rate", "jurisdiction", "collectedBy", "code"], false);
   requireOneOf(value.kind, ADDITION_KINDS); requirePhisPaymentMinor(value.minor); requireText(value.label);
   requireOneOf(value.collectedBy, ["merchant", "provider"]);
-  if (typeof value.inclusive !== "boolean" || (value.rate !== null && (typeof value.rate !== "string" || !/^[0-9]{1,3}(\.[0-9]{1,4})?$/.test(value.rate)))
+  const flags = requireFlags(value.flags, PhisPaymentAdditionFlag.Inclusive);
+  const inclusive = (flags & PhisPaymentAdditionFlag.Inclusive) !== 0;
+  if ((value.rate !== null && (typeof value.rate !== "string" || !/^[0-9]{1,3}(\.[0-9]{1,4})?$/.test(value.rate)))
     || (value.jurisdiction !== null && (typeof value.jurisdiction !== "string" || !/^[A-Z]{2}(-[A-Z0-9]{1,8})?$/.test(value.jurisdiction)))) invalid();
   if (value.code !== null) requirePhisPaymentReference(value.code);
-  if (value.kind === "discount" ? (value.inclusive || value.code === null) : value.code !== null) invalid();
-  return { kind: value.kind, minor: value.minor, label: value.label, inclusive: value.inclusive, rate: value.rate as string | null,
+  if (value.kind === "discount" ? (inclusive || value.code === null) : value.code !== null) invalid();
+  return { kind: value.kind, minor: value.minor, label: value.label, flags, rate: value.rate as string | null,
     jurisdiction: value.jurisdiction as string | null, collectedBy: value.collectedBy, code: value.code as string | null };
 }
 
@@ -398,10 +492,19 @@ function validateAdditions(value: unknown): PhisPaymentAddition[] {
 
 /** A normalized copy of observed totals; the policy rules are checked by `validatePhisPaymentObservation`. */
 export function normalizePhisPaymentTotals(value: PhisPaymentObservedTotals, frozenAt: string | null): PhisPaymentTotals {
-  requireKeys(value, ["total", "additions", "customer"], false);
+  requireKeys(value, ["total", "additions", "customer", "presentment"], false);
   requireKeys(value.total, ["currency", "minor"], false); requirePhisPaymentMinor(value.total.minor);
   if (typeof value.total.currency !== "string") invalid();
-  return { total: { currency: value.total.currency, minor: value.total.minor }, additions: validateAdditions(value.additions), customer: validatePhisPaymentCustomerDetails(value.customer, false), frozenAt };
+  // What the customer saw in their own currency: informational, never part of a sum, never the payment's currency.
+  let presentment: PhisPaymentMoney | null = null;
+  if (value.presentment !== null) {
+    requireKeys(value.presentment, ["currency", "minor"], false);
+    validatePhisPaymentMoney(value.presentment, false);
+    if (value.presentment.currency === value.total.currency) invalid();
+    presentment = { currency: value.presentment.currency, minor: value.presentment.minor };
+  }
+  return { total: { currency: value.total.currency, minor: value.total.minor }, additions: validateAdditions(value.additions),
+    customer: validatePhisPaymentCustomerDetails(value.customer, false), presentment, frozenAt };
 }
 
 export function copyPhisPaymentAdditions(value: readonly PhisPaymentAddition[] | null): PhisPaymentAddition[] | null {
@@ -427,11 +530,12 @@ function validateObservedTotals(previous: PhisPayment, observation: PhisPaymentP
     let exclusiveTax = BigInt(0); let inclusive = BigInt(0); let providerDiscounts = BigInt(0); let discounts = BigInt(0); let shipping = 0;
     for (const addition of totals.additions) {
       if (addition.kind === "tax") {
-        if (pricing.tax === "none" || addition.inclusive !== (pricing.basis === "final")
+        const inclusiveTax = (addition.flags & PhisPaymentAdditionFlag.Inclusive) !== 0;
+        if (pricing.tax === "none" || inclusiveTax !== (pricing.basis === "final")
           || addition.collectedBy !== (pricing.tax === "merchant-of-record" ? "provider" : "merchant")) invalid();
-        if (addition.inclusive) inclusive += BigInt(addition.minor); else exclusiveTax += BigInt(addition.minor);
+        if (inclusiveTax) inclusive += BigInt(addition.minor); else exclusiveTax += BigInt(addition.minor);
       } else if (addition.kind === "shipping") {
-        if (!addition.inclusive || addition.collectedBy !== "merchant" || pricing.shipping === null || addition.minor !== pricing.shipping.minor || shipping++ > 0) invalid();
+        if ((addition.flags & PhisPaymentAdditionFlag.Inclusive) === 0 || addition.collectedBy !== "merchant" || pricing.shipping === null || addition.minor !== pricing.shipping.minor || shipping++ > 0) invalid();
       } else {
         if (addition.collectedBy !== "merchant") invalid();
         const expected = stated.get(addition.code!);
@@ -447,7 +551,9 @@ function validateObservedTotals(previous: PhisPayment, observation: PhisPaymentP
   }
   if (previous.totals?.frozenAt) {
     const { frozenAt: _frozenAt, ...frozen } = previous.totals;
-    if (!isDeepStrictEqual(frozen, { total: totals.total, additions: totals.additions, customer: totals.customer })) invalid();
+    // `presentment` is informational and may arrive after the total became binding; the binding parts may not move.
+    const { presentment: _presentment, ...binding } = frozen;
+    if (!isDeepStrictEqual(binding, { total: totals.total, additions: totals.additions, customer: totals.customer })) invalid();
   }
   return BigInt(totals.total.minor);
 }

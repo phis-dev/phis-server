@@ -87,7 +87,7 @@ export const PHIS_COMMAND_FLAGS: Record<string, FlagSpec> = {
     key: S, name: S, hostname: S, "public-base-url": S, "source-locale": S, "default-locale": S,
     "available-locales": S, "support-email": S, email: S, "time-zone": S,
   },
-  "site set": { key: S, name: S, hostname: S, "public-base-url": S, "support-email": S, email: S, "time-zone": S, "entitlement-grace-days": S, "users-access-log-days": S },
+  "site set": { key: S, name: S, hostname: S, "public-base-url": S, "support-email": S, email: S, "time-zone": S, "users-access-log-days": S },
   "site enable": { key: S },
   "site disable": { key: S },
   "site del": { key: S },

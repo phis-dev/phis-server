@@ -4,6 +4,7 @@ import { buildPhisPaymentProviderContext } from "./provider.ts";
 import { phisPaymentMethodSupports, phisPaymentPricingSelector, phisPaymentReturnUrl, validatePhisPaymentMoney, validatePhisPaymentPricing,
   validatePhisPaymentExpiresAt, validatePhisPaymentProfileDraft, validatePhisPaymentProviderProbe } from "./validation.ts";
 import type { PhisPaymentProfile } from "./types.ts";
+import { TEST_ALL_METHOD_FLAGS, TEST_CURRENCY_FEATURES } from "../../../test/payment-features.ts";
 
 describe("Payment authority inputs", () => {
   it("keeps currency exponents independent of display rounding", () => {
@@ -16,8 +17,8 @@ describe("Payment authority inputs", () => {
     for (const minor of ["0", "01", "1.2", "-1", "1e2", "10000000000000000"]) expect(() => validatePhisPaymentMoney({ currency: "CHF", minor })).toThrow();
   });
   it("copies only public method facts out of a Provider probe", () => {
-    const pricing = { bases: ["final"] as const, tax: ["none"] as const, maxDiscounts: 0, promotionCodes: "none" as const, collectsCustomerDetails: false, collectsTaxIds: false, merchantOfRecord: null, extra: "private-provider-data" };
-    const features = { captureModes: ["automatic"] as const, checkoutKinds: ["redirect"] as const, canPartialCapture: false, canCancel: true, canRefund: true, canPartialRefund: true, pricing, extra: "private-provider-data" };
+    const pricing = { bases: ["final"] as const, tax: ["none"] as const, maxDiscounts: 0, promotionCodes: "none" as const, flags: 0, merchantOfRecord: null, extra: "private-provider-data" };
+    const features = { captureModes: ["automatic"] as const, checkoutKinds: ["redirect"] as const, flags: 14, pricing, currency: TEST_CURRENCY_FEATURES, extra: "private-provider-data" };
     const probe = { merchantIdentity: "acct_test", mode: "test" as const, methods: [{ methodKey: "card", title: "Card", features, extra: "private-provider-data" }] };
     const normalized = validatePhisPaymentProviderProbe(probe, { merchantIdentity: "acct_test", mode: "test" });
     expect(JSON.stringify(normalized)).not.toContain("private-provider-data");
@@ -26,9 +27,38 @@ describe("Payment authority inputs", () => {
     const withheld = { ...probe, methods: [{ ...probe.methods[0]!, features: { ...features, pricing: { ...pricing, bases: ["net"] } } }] };
     expect(() => validatePhisPaymentProviderProbe(withheld as unknown as typeof probe, { merchantIdentity: "acct_test", mode: "test" })).toThrow();
   });
+  it("takes the 0.9 declarations as flags and refuses a boolean or an unknown bit", () => {
+    const pricing = { bases: ["final"] as const, tax: ["none"] as const, maxDiscounts: 0, promotionCodes: "none" as const, flags: 0, merchantOfRecord: null };
+    const stored = { setup: ["with-payment"], chargeResult: "notified", flags: 1, perPayer: "many", pricing };
+    const base = { captureModes: ["automatic"] as const, checkoutKinds: ["redirect"] as const, flags: TEST_ALL_METHOD_FLAGS, pricing, currency: TEST_CURRENCY_FEATURES };
+    const probe = (features: unknown) => validatePhisPaymentProviderProbe({ merchantIdentity: "acct_test", mode: "test", methods: [{ methodKey: "card", title: "Card", features }] } as never,
+      { merchantIdentity: "acct_test", mode: "test" }).methods[0]!.features;
+    const every = { units: ["month", "year"], maxDays: null };
+    const read = probe({ ...base, stored, collection: { automatic: every, paymentRequest: { units: ["year"], maxDays: 366 }, providerManaged: null },
+      documents: { kinds: [{ kind: "invoice", flags: 3 }], issuer: { kind: "provider", name: "Sold through Link, LLC", taxId: "CHE-1" } } });
+    expect(read.flags).toBe(TEST_ALL_METHOD_FLAGS);
+    expect(read.stored!.flags).toBe(1);
+    expect(read.collection).toEqual({ automatic: every, paymentRequest: { units: ["year"], maxDays: 366 }, providerManaged: null });
+    expect(read.documents!.issuer.name).toBe("Sold through Link, LLC");
+    expect(probe(base).collection).toBeNull();
+    for (const bad of [
+      { ...base, flags: 16 },
+      { ...base, flags: 8 },                                          // a partial refund without a refund
+      { ...base, canRefund: true, flags: undefined },
+      { ...base, currency: undefined },
+      { ...base, currency: { ...TEST_CURRENCY_FEATURES, conversionCurrencies: ["EUR"] } }, // a conversion currency without a conversion
+      { ...base, currency: { ...TEST_CURRENCY_FEATURES, flags: 2 } },
+      { ...base, pricing: { ...pricing, flags: 4 } },
+      { ...base, stored: { ...stored, flags: true } },
+      { ...base, collection: { automatic: every, paymentRequest: null, providerManaged: null } }, // automatic without stored
+      { ...base, stored, collection: { automatic: { units: [], maxDays: null }, paymentRequest: null, providerManaged: null } },
+      { ...base, documents: { kinds: [{ kind: "invoice", flags: 4 }], issuer: { kind: "merchant", name: null, taxId: null } } },
+      { ...base, documents: { kinds: [], issuer: { kind: "provider", name: null, taxId: null } } },
+    ]) expect(() => probe(bad)).toThrow();
+  });
   it("takes the ends a method's checkout can be given, and a consumer's end as an instant", () => {
-    const pricing = { bases: ["final"] as const, tax: ["none"] as const, maxDiscounts: 0, promotionCodes: "none" as const, collectsCustomerDetails: false, collectsTaxIds: false, merchantOfRecord: null };
-    const features = { captureModes: ["automatic"] as const, checkoutKinds: ["redirect"] as const, canPartialCapture: false, canCancel: true, canRefund: true, canPartialRefund: true, pricing };
+    const pricing = { bases: ["final"] as const, tax: ["none"] as const, maxDiscounts: 0, promotionCodes: "none" as const, flags: 0, merchantOfRecord: null };
+    const features = { captureModes: ["automatic"] as const, checkoutKinds: ["redirect"] as const, flags: 14, pricing, currency: TEST_CURRENCY_FEATURES };
     const probe = (checkoutExpiry: unknown) => validatePhisPaymentProviderProbe({ merchantIdentity: "acct_test", mode: "test", methods: [{ methodKey: "card", title: "Card", features: { ...features, checkoutExpiry } }] } as never,
       { merchantIdentity: "acct_test", mode: "test" }).methods[0]!.features.checkoutExpiry;
     expect(probe({ minSeconds: 1800, maxSeconds: 86_400, extra: 1 })).toEqual({ minSeconds: 1800, maxSeconds: 86_400 });
@@ -44,9 +74,9 @@ describe("Payment authority inputs", () => {
     }
   });
   it("takes a Merchant of Record's reach exactly when the method sells as one", () => {
-    const pricing = { bases: ["final", "net"] as const, tax: ["none", "merchant-of-record"] as const, maxDiscounts: 0, promotionCodes: "none" as const, collectsCustomerDetails: true, collectsTaxIds: false,
+    const pricing = { bases: ["final", "net"] as const, tax: ["none", "merchant-of-record"] as const, maxDiscounts: 0, promotionCodes: "none" as const, flags: 1,
       merchantOfRecord: { countries: ["CH", "DE", "US"], taxCategories: ["digital-goods", "digital-service"] as const, businessTaxIds: ["charge"] as const } };
-    const features = { captureModes: ["automatic"] as const, checkoutKinds: ["redirect"] as const, canPartialCapture: false, canCancel: true, canRefund: true, canPartialRefund: true, pricing };
+    const features = { captureModes: ["automatic"] as const, checkoutKinds: ["redirect"] as const, flags: 14, pricing, currency: TEST_CURRENCY_FEATURES };
     const probe = (value: unknown) => validatePhisPaymentProviderProbe({ merchantIdentity: "acct_test", mode: "test", methods: [{ methodKey: "card", title: "Card", features: { ...features, pricing: value } }] } as never, { merchantIdentity: "acct_test", mode: "test" });
     expect(probe(pricing).methods[0]!.features.pricing.merchantOfRecord).toEqual(pricing.merchantOfRecord);
     // Stated under merchant-of-record, and only there.
@@ -77,7 +107,7 @@ describe("Payment authority inputs", () => {
     expect(() => validatePhisPaymentPricing({ ...policy, customer: { country: "ch", postalCode: null, region: null, addressSource: "billing", taxIds: [] } }, { currency: "CHF", minor: "3250" })).toThrow();
   });
   it("matches a policy against a method's pricing features", () => {
-    const features = { bases: ["final", "net"] as const, tax: ["none", "provider"] as const, maxDiscounts: 1, promotionCodes: "alone" as const, collectsCustomerDetails: true, collectsTaxIds: true, merchantOfRecord: null };
+    const features = { bases: ["final", "net"] as const, tax: ["none", "provider"] as const, maxDiscounts: 1, promotionCodes: "alone" as const, flags: 3, merchantOfRecord: null };
     const selector = { basis: "net" as const, tax: "provider" as const, discounts: 1, promotionCodes: "none" as const };
     expect(phisPaymentMethodSupports(features, selector)).toBe(true);
     expect(phisPaymentMethodSupports(features, { ...selector, discounts: 0, promotionCodes: "provider" })).toBe(true);
@@ -95,7 +125,7 @@ describe("Payment authority inputs", () => {
     expect(() => phisPaymentReturnUrl("http://shop.example", "/return", "id")).toThrow();
   });
   it("hands a Provider only its own Site's named credentials", async () => {
-    const profile: PhisPaymentProfile = { key: "sandbox", mode: "test", grants: [], siteId: 1, merchantIdentity: "acct_test", revision: 1, enabled: true, retired: false, probedAt: null, methods: null, providerKey: "@phis/stripe/stripe", providerAddonId: "@phis/stripe", credentialReferences: {
+    const profile: PhisPaymentProfile = { key: "sandbox", mode: "test", grants: [], siteId: 1, merchantIdentity: "acct_test", revision: 1, enabled: true, retired: false, probedAt: null, features: null, providerKey: "@phis/stripe/stripe", providerAddonId: "@phis/stripe", credentialReferences: {
       apiKey: "site:demo:addon:@phis/stripe:sandbox-api", webhookSecret: "site:demo:addon:@phis/stripe:sandbox-hook",
     } };
     const read = vi.fn(async (ref: string) => ref.endsWith("-api") ? "test-api-value" : "test-webhook-value");

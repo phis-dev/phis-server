@@ -8,23 +8,27 @@ vi.mock("../db", () => ({ getPool: () => ({}) }));
 vi.mock("../addons/roles-capability.ts", () => ({ buildPhisAddonRolesCapability: () => ({}) }));
 vi.mock("../addons/event-trigger.ts", () => ({ schedulePhisAddonEventDelivery: vi.fn() }));
 vi.mock("./engine.ts", () => ({ PhisPaymentEngine: class {
-  listProfiles = state.action; listMethods = state.action; profileReach = state.action; refreshProfileReach = state.action; create = state.action; get = state.action; getOperation = state.action; getRefund = state.action;
+  listProfiles = state.action; listMethods = state.action; profileFeatures = state.action; refreshProfileFeatures = state.action; chooseCollection = state.action; create = state.action; get = state.action; getOperation = state.action; getRefund = state.action;
   complete = state.action; refresh = state.action; capture = state.action; cancel = state.action; refund = state.action;
   getStoredMethod = state.action; listStoredMethods = state.action; removeStoredMethod = state.action;
   createSubscription = state.action; getSubscription = state.action; listSubscriptionPeriods = state.action; cancelSubscription = state.action;
   resumeSubscription = state.action; settleSubscription = state.action; replaceSubscriptionMethod = state.action;
   setupMethod = state.action; refreshStoredMethod = state.action; changeSubscriptionPrice = state.action;
+  previewSubscriptionChange = state.action; changeSubscription = state.action; cancelSubscriptionChange = state.action;
+  listSubscriptionChanges = state.action; subscriptionCredit = state.action; listSettlements = state.action;
 } }));
 const api = () => buildPhisPaymentsCapability({ scope: { siteId: 17, siteKey: "demo", consumerAddonId: "@test/consumer" },
   manifest: { roles: [] } as unknown as PhisAddonManifestV1, authority: { kind: "request", operator: true, actorUserId: null }, signal: new AbortController().signal });
 beforeEach(() => { vi.mocked(schedulePhisAddonEventDelivery).mockReset(); state.action.mockReset(); state.committed = false; });
 it.each(["create", "complete", "refresh", "capture", "cancel", "refund", "removeStoredMethod",
-  "createSubscription", "cancelSubscription", "resumeSubscription", "settleSubscription", "replaceSubscriptionMethod"] as const)("schedules delivery only after %s commits", async method => {
+  "createSubscription", "cancelSubscription", "resumeSubscription", "settleSubscription", "replaceSubscriptionMethod",
+  "changeSubscription", "cancelSubscriptionChange"] as const)("schedules delivery only after %s commits", async method => {
   state.action.mockImplementation(async () => { expect(schedulePhisAddonEventDelivery).not.toHaveBeenCalled(); state.committed = true; return "result"; });
   expect(await (api()[method] as (...args: unknown[]) => Promise<unknown>)()).toBe("result");
   expect(state.committed).toBe(true); expect(schedulePhisAddonEventDelivery).toHaveBeenCalledWith(17);
 });
-it.each(["listProfiles", "listMethods", "profileReach", "refreshProfileReach", "get", "getOperation", "getRefund", "getStoredMethod", "listStoredMethods", "getSubscription", "listSubscriptionPeriods"] as const)("keeps %s a read without delivery writes", async method => {
+it.each(["listProfiles", "listMethods", "profileFeatures", "refreshProfileFeatures", "chooseCollection", "previewSubscriptionChange", "listSubscriptionChanges",
+  "subscriptionCredit", "listSettlements", "get", "getOperation", "getRefund", "getStoredMethod", "listStoredMethods", "getSubscription", "listSubscriptionPeriods"] as const)("keeps %s a read without delivery writes", async method => {
   state.action.mockResolvedValue(null); await (api()[method] as (...args: unknown[]) => Promise<unknown>)();
   expect(schedulePhisAddonEventDelivery).not.toHaveBeenCalled();
 });

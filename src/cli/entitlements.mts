@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import { PHIS_ENTITLEMENT_CORE_SOURCE, type PhisEntitlement } from "@phis/contracts/entitlements";
+import { PhisProductFlag } from "@phis/contracts/products";
 import {
   allowEntitlementSource, disallowEntitlementSource, ensureEntitlementSubject, findEntitlementSubject, grantEntitlement, listEntitlementSources,
   listEntitlements, updateEntitlement,
@@ -67,14 +68,14 @@ function reference(flags: Flags) {
 function describeEntry(entry: PhisEntitlement) {
   return `${entry.product}  ${entry.source}  ${entry.reference}  ${entry.startsAt} .. ${entry.endsAt ?? "open"}`
     + (entry.subscriptionId ? `  subscription ${entry.subscriptionId}` : "")
-    + `  quantity ${entry.quantity ?? "-"}  flags ${entry.flags}  ${entry.valid ? "valid" : "not valid"}`;
+    + `  quantity ${entry.quantity ?? "-"}  flags ${entry.flags}  ${entry.standing}`;
 }
 
 /** What `phis entitlement ...` does, as data plus the lines to print: the caller chooses between them. */
 export async function runPhisEntitlementCommand(root: string, pool: Pool, words: readonly string[], flags: Flags) {
   const selectedSite = await site(pool, flag(flags, "site").toLowerCase());
   const addons = readAddonDesiredState(root).addons;
-  const entries: PhisInstalledManifestEntries = Object.fromEntries(addons.map((a) => [a.addonId, { enabled: a.enabled, manifest: a.manifest }]));
+  const entries: PhisInstalledManifestEntries = Object.fromEntries(addons.map((a) => [a.addonId, { flags: a.flags, manifest: a.manifest }]));
   const [command, subcommand] = words;
 
   if (command === "source") {
@@ -145,7 +146,7 @@ export async function runPhisEntitlementCommand(root: string, pool: Pool, words:
     if (!await isPhiSiteMember(pool, selectedSite.id, id)) throw new Error(`User ${id} is not an active member of ${selectedSite.key}.`);
     const quantityFlag = optionalFlag(flags, "quantity");
     let quantity: number | null = null;
-    if (!held.counted) {
+    if ((held.flags & PhisProductFlag.Counted) === 0) {
       if (quantityFlag !== undefined) throw new Error(`${product} does not count; an entry of it carries no --quantity.`);
     } else {
       quantity = quantityFlag !== undefined && /^\d+$/.test(quantityFlag) ? Number(quantityFlag) : Number.NaN;
@@ -164,7 +165,7 @@ export async function runPhisEntitlementCommand(root: string, pool: Pool, words:
     const subject = await ensureEntitlementSubject(pool, selectedSite.id, id);
     const subjectId = (await findEntitlementSubject(pool, selectedSite.id, subject))!.id;
     const entry = await grantEntitlement(pool, { siteId: selectedSite.id, subjectId, product,
-      source: PHIS_ENTITLEMENT_CORE_SOURCE, reference: ref, startsAt: null, endsAt, quantity, counted: held.counted, listeners });
+      source: PHIS_ENTITLEMENT_CORE_SOURCE, reference: ref, startsAt: null, endsAt, quantity, counted: (held.flags & PhisProductFlag.Counted) !== 0, listeners });
     if (!entry) throw new Error(`${product} is ${held.state}; a new entry needs an active product.`);
     return { data: { site: selectedSite.key, userId: id, entitlement: entry }, lines: [`Granted: ${describeEntry(entry)}`] };
   }

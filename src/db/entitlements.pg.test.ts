@@ -2,8 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { Pool } from "pg";
 
-import { PhisEntitlementFlag } from "@phis/contracts/entitlements";
-import type { PhisProductId } from "@phis/contracts/products";
+import { PhisEntitlementFlag, PhisEntitlementStateFlag } from "@phis/contracts/entitlements";
+import { PhisProductFlag, type PhisProductId } from "@phis/contracts/products";
 
 import {
   activatePhiTestAddonForSite,
@@ -76,7 +76,7 @@ describe.skipIf(!configured)("entitlements", () => {
     const key = id.slice(id.lastIndexOf(":") + 1);
     await registerProduct(pool, {
       siteId: site.id, supplier: SUPPLIER, listeners: [],
-      draft: normalizePhisProductDraft({ key, type: "licence", title: key, summary: "", counted: input.counted === true }),
+      draft: normalizePhisProductDraft({ key, type: "licence", title: key, summary: "", flags: input.counted === true ? PhisProductFlag.Counted : 0 }),
     });
     await setProductState(pool, { siteId: site.id, supplier: SUPPLIER, key, state: input.state ?? "active", listeners: [] });
     return id;
@@ -133,7 +133,7 @@ describe.skipIf(!configured)("entitlements", () => {
     await clearOutbox();
     const reference = ref("idem");
     const first = await grant({ reference, recipients: listeners });
-    expect(first).toMatchObject({ product: LICENSE, subject, source: SHOP, reference, valid: true, flags: 0, quantity: null });
+    expect(first).toMatchObject({ product: LICENSE, subject, source: SHOP, reference, standing: "valid", flags: 0, quantity: null });
     const rows = await outbox();
     expect(rows.map((row) => row.addon_id).sort()).toEqual([READY_A, READY_B]);
     expect(rows[0]).toMatchObject({ subject_kind: "entitlement", payload: { subject, product: LICENSE } });
@@ -149,7 +149,7 @@ describe.skipIf(!configured)("entitlements", () => {
   it("adds up the valid entries of a counted product", async () => {
     await grant({ product: SEATS, counted: true, quantity: 3 });
     await grant({ product: SEATS, counted: true, quantity: 4, endsAt: hours(2) });
-    expect(await stateOf(SEATS)).toMatchObject({ entitled: true, quantity: 7 });
+    expect(await stateOf(SEATS)).toMatchObject({ flags: PhisEntitlementStateFlag.Entitled, quantity: 7 });
     // A product that does not count carries no quantity, whatever its entries say.
     expect(await stateOf(LICENSE)).toMatchObject({ quantity: null });
   });
@@ -158,23 +158,23 @@ describe.skipIf(!configured)("entitlements", () => {
     const kind = await product("@pgtest/licenses:suspend" as PhisProductId);
     const reference = ref("susp");
     await grant({ product: kind, reference });
-    expect((await stateOf(kind)).entitled).toBe(true);
+    expect((await stateOf(kind)).flags).toBe(PhisEntitlementStateFlag.Entitled);
 
-    const suspended = await updateEntitlement(pool, { siteId: site.id, source: SHOP, product: kind, reference, suspended: true, listeners: [] });
-    expect(suspended).toMatchObject({ valid: false, flags: PhisEntitlementFlag.Suspended });
-    expect((await stateOf(kind)).entitled).toBe(false);
+    const suspended = await updateEntitlement(pool, { siteId: site.id, source: SHOP, product: kind, reference, setFlags: PhisEntitlementFlag.Suspended, listeners: [] });
+    expect(suspended).toMatchObject({ standing: "suspended", flags: PhisEntitlementFlag.Suspended });
+    expect((await stateOf(kind)).flags).toBe(0);
 
-    const resumed = await updateEntitlement(pool, { siteId: site.id, source: SHOP, product: kind, reference, suspended: false, listeners: [] });
-    expect(resumed).toMatchObject({ valid: true, flags: 0 });
+    const resumed = await updateEntitlement(pool, { siteId: site.id, source: SHOP, product: kind, reference, clearFlags: PhisEntitlementFlag.Suspended, listeners: [] });
+    expect(resumed).toMatchObject({ standing: "valid", flags: 0 });
 
     const revoked = await updateEntitlement(pool, { siteId: site.id, source: SHOP, product: kind, reference, revoke: true, listeners: [] });
-    expect(revoked).toMatchObject({ valid: false, flags: PhisEntitlementFlag.Revoked });
-    expect((await stateOf(kind)).entitled).toBe(false);
+    expect(revoked).toMatchObject({ standing: "revoked", flags: PhisEntitlementFlag.Revoked });
+    expect((await stateOf(kind)).flags).toBe(0);
 
     // Over for good: neither a resume nor a new end brings it back, and the answer is "not found".
-    expect(await updateEntitlement(pool, { siteId: site.id, source: SHOP, product: kind, reference, suspended: false, listeners: [] })).toBeNull();
+    expect(await updateEntitlement(pool, { siteId: site.id, source: SHOP, product: kind, reference, clearFlags: PhisEntitlementFlag.Suspended, listeners: [] })).toBeNull();
     expect(await updateEntitlement(pool, { siteId: site.id, source: SHOP, product: kind, reference, endsAt: null, listeners: [] })).toBeNull();
-    expect((await stateOf(kind)).entitled).toBe(false);
+    expect((await stateOf(kind)).flags).toBe(0);
     const [entry] = await listEntitlements(pool, { siteId: site.id, subjectId, product: kind });
     expect(entry!.flags & PhisEntitlementFlag.Revoked).toBe(PhisEntitlementFlag.Revoked);
   });
@@ -182,9 +182,9 @@ describe.skipIf(!configured)("entitlements", () => {
   it("does not count an entry that has ended or not yet started", async () => {
     const kind = await product("@pgtest/licenses:timed" as PhisProductId);
     await grant({ product: kind, startsAt: hours(-3), endsAt: hours(-1) });
-    expect(await stateOf(kind)).toEqual({ product: kind, entitled: false, quantity: null, until: null, via: [] });
+    expect(await stateOf(kind)).toEqual({ product: kind, flags: 0, quantity: null, until: null, via: [] });
     await grant({ product: kind, startsAt: hours(1), endsAt: hours(2) });
-    expect((await stateOf(kind)).entitled).toBe(false);
+    expect((await stateOf(kind)).flags).toBe(0);
   });
 
   it("answers until as the latest end, and null while one valid entry has none", async () => {
@@ -193,18 +193,18 @@ describe.skipIf(!configured)("entitlements", () => {
     const late = hours(6);
     await grant({ product: kind, endsAt: early });
     await grant({ product: kind, endsAt: late });
-    expect(await stateOf(kind)).toMatchObject({ entitled: true, until: late });
+    expect(await stateOf(kind)).toMatchObject({ flags: PhisEntitlementStateFlag.Entitled, until: late });
     await grant({ product: kind });
-    expect(await stateOf(kind)).toMatchObject({ entitled: true, until: null });
+    expect(await stateOf(kind)).toMatchObject({ flags: PhisEntitlementStateFlag.Entitled, until: null });
   });
 
   it("does not find another source's entry to change or take back", async () => {
     const kind = await product("@pgtest/licenses:own" as PhisProductId);
     const reference = ref("own");
     await grant({ product: kind, reference, source: SHOP });
-    expect(await updateEntitlement(pool, { siteId: site.id, source: OTHER, product: kind, reference, suspended: true, listeners: [] })).toBeNull();
+    expect(await updateEntitlement(pool, { siteId: site.id, source: OTHER, product: kind, reference, setFlags: PhisEntitlementFlag.Suspended, listeners: [] })).toBeNull();
     expect(await updateEntitlement(pool, { siteId: site.id, source: OTHER, product: kind, reference, revoke: true, listeners: [] })).toBeNull();
-    expect((await stateOf(kind)).entitled).toBe(true);
+    expect((await stateOf(kind)).flags).toBe(PhisEntitlementStateFlag.Entitled);
     // The same reference of another source is its own entry.
     const mine = await grant({ product: kind, reference, source: OTHER });
     expect(mine.source).toBe(OTHER);
@@ -240,7 +240,7 @@ describe.skipIf(!configured)("entitlements", () => {
     expect(await outbox()).toHaveLength(0);
 
     // A moved ending is owed its event again.
-    const moved = (await listEntitlements(pool, { siteId: site.id, subjectId, product: kind })).find((entry) => !entry.valid && entry.flags === 0)!;
+    const moved = (await listEntitlements(pool, { siteId: site.id, subjectId, product: kind })).find((entry) => entry.standing !== "valid" && entry.flags === 0)!;
     await updateEntitlement(pool, { siteId: site.id, source: SHOP, product: kind, reference: moved.reference, endsAt: hours(-0.5), listeners: [] });
     expect(await announceEndedEntitlements(pool, [READY_A])).toContain(site.id);
     expect((await outbox()).filter((row) => row.addon_id === READY_A)).toHaveLength(1);
@@ -294,22 +294,22 @@ describe.skipIf(!configured)("entitlements", () => {
       siteId: site.id, subjectId, product: active, source: SHOP, reference: "r-new", startsAt: null, endsAt: null, quantity: null, counted: false, listeners: [],
     })).toBeNull();
     // Withdrawn: holders keep it as it was, and the entry can still be changed and taken back.
-    expect((await stateOf(active)).entitled).toBe(true);
-    expect(await updateEntitlement(pool, { siteId: site.id, source: SHOP, product: active, reference: "r-fade", suspended: true, listeners: [] })).not.toBeNull();
+    expect((await stateOf(active)).flags).toBe(PhisEntitlementStateFlag.Entitled);
+    expect(await updateEntitlement(pool, { siteId: site.id, source: SHOP, product: active, reference: "r-fade", setFlags: PhisEntitlementFlag.Suspended, listeners: [] })).not.toBeNull();
     expect(await updateEntitlement(pool, { siteId: site.id, source: SHOP, product: active, reference: "r-fade", revoke: true, listeners: [] })).not.toBeNull();
   });
 
   it("does not count entries while their product is locked, nor those whose product does not exist, and keeps them", async () => {
     const locked = await product("@pgtest/licenses:lockme" as PhisProductId, { counted: true });
     await grant({ product: locked, counted: true, quantity: 2 });
-    expect(await stateOf(locked)).toMatchObject({ entitled: true, quantity: 2 });
+    expect(await stateOf(locked)).toMatchObject({ flags: PhisEntitlementStateFlag.Entitled, quantity: 2 });
     await moveProductsAsOperator(pool, { siteId: site.id, to: "locked", productId: locked, listeners: [] });
-    expect(await stateOf(locked)).toEqual({ product: locked, entitled: false, quantity: null, until: null, via: [] });
+    expect(await stateOf(locked)).toEqual({ product: locked, flags: 0, quantity: null, until: null, via: [] });
     const [entry] = await listEntitlements(pool, { siteId: site.id, subjectId, product: locked });
-    expect(entry).toMatchObject({ valid: false, flags: 0 });
+    expect(entry).toMatchObject({ standing: "product-locked", flags: 0 });
     await moveProductsAsOperator(pool, { siteId: site.id, to: "unlocked", productId: locked, listeners: [] });
     // Unlocked it is withdrawn, and holders keep it as it was.
-    expect(await stateOf(locked)).toMatchObject({ entitled: true, quantity: 2 });
+    expect(await stateOf(locked)).toMatchObject({ flags: PhisEntitlementStateFlag.Entitled, quantity: 2 });
 
     // An entry whose product is not there (any more) stays and does not count.
     const orphan = "@pgtest/licenses:vanished" as PhisProductId;
@@ -317,7 +317,7 @@ describe.skipIf(!configured)("entitlements", () => {
       `INSERT INTO phis.entitlements (site_id, subject_id, product, source, reference) VALUES ($1, $2, $3, $4, 'orphan')`,
       [site.id, subjectId, orphan, SHOP],
     );
-    expect(await stateOf(orphan)).toMatchObject({ entitled: false });
-    expect(await listEntitlements(pool, { siteId: site.id, subjectId, product: orphan })).toMatchObject([{ valid: false }]);
+    expect(await stateOf(orphan)).toMatchObject({ flags: 0 });
+    expect(await listEntitlements(pool, { siteId: site.id, subjectId, product: orphan })).toMatchObject([{ standing: "product-locked" }]);
   });
 });
