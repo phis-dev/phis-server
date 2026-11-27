@@ -1158,6 +1158,7 @@ dispatch, by the job runner, and when its service factory is resolved.
 | `@phis/server/media-release:v1` | yes -- [`media-release:v1`](#media-releasev1) | giving up Media library Assets; Core deletes one nothing references |
 | `@phis/server/users:v1` | yes -- [`users:v1`](#usersv1) | a person of the Site, field by field by the acting person; the Site's address book |
 | `@phis/server/translations:v1` | yes -- [`translations:v1`](#translationsv1) | the Add-on's own words as source texts of the Site's translation store, read in a reader's language |
+| `@phis/server/billing:v1` | yes -- [`billing:v1`](#billingv1) and [PAYMENTS.md](./PAYMENTS.md) §16 | the Site's billing documents: reading them by the access rules, issuing the merchant's own as an allowed source |
 
 Core descriptors are generated from the running release and reconciled into the registry. They are not
 editable Site settings and cannot be disabled per Site.
@@ -1989,20 +1990,33 @@ supplier.
   another's, or an unknown one, is refused alike), and `endsAt` is left out. The entry's validity is derived on
   every read from the subscription's record, never written: without a paid period (status `pending`, `period`
   null) it counts for nothing; otherwise it counts until the end of the latest paid period and -- as long as
-  the subscription has not ended (no `endedAt`, status not `canceled`) -- for the Site's grace time after it;
+  the subscription has not ended (no `endedAt`, status not `canceled`) -- for the subscription's own `graceDays`
+  after it (0 to 30, set from what was sold and by an applied change; phis-contracts 0.9);
   an ended subscription counts to the paid period's end and no longer. A renewal therefore needs no call, a late
   payment does not switch anything off at once, and a period that stays unpaid ends the entitlement by itself.
   The entry's `endsAt` in an answer is the end of the latest paid period, without the grace; `state.until`
   is the instant the entry stops counting, so the period's end plus the grace while the subscription runs
-  and the period's end once it has ended. During the grace an answer is therefore `entitled` with an
+  and the period's end once it has ended. During the grace an answer therefore carries `Entitled` with an
   `until` ahead, never one in the past, and what an Add-on derives from it (a signed offline proof) lasts as
-  long as the entitlement does. `update` refuses to set `endsAt` on a bound entry (`suspended` and `quantity` stay possible).
-  Revoked, suspended and a locked product act as for any entry. The grace time is a Site setting of Core,
-  `phis.sites.entitlement_grace_days`, whole days from 0 to 14, default 14, set with `phis site set
-  --entitlement-grace-days`; 0 ends the entitlement with the period. A seller that runs its own
-  subscriptions writes `endsAt` instead, and its grace is its own.
+  long as the entitlement does. `update` refuses to set `endsAt` on an entry that stays bound (`setFlags`,
+  `clearFlags` and `quantity` stay possible); `update({ ..., subscriptionId: null })` takes the entry off its
+  subscription -- it then counts without an end, or until the `endsAt` stated in the same call, and whatever
+  hangs on it (a licence key) stays; only away from a subscription, never onto one, and an entry not bound is
+  answered unchanged and without an event. Revoked, suspended and a locked product act as for any entry. The
+  Site-wide grace (`phis.sites.entitlement_grace_days`) is gone with 0.9: the grace is the subscription's. A
+  seller that runs its own subscriptions writes `endsAt` instead, and its grace is its own.
 
-The capability: `subject`, `subjectForUser`, `check`, `checkMany`, `redeliver`, `list`, `grant`, `update`, `revoke`.
+The capability: `subject`, `subjectForUser`, `check`, `checkMany`, `redeliver`, `list`, `listNamed`, `grant`, `update`, `revoke`.
+
+**Flags and standing (phis-contracts 0.9).** An entry answers `standing` instead of a yes/no: `valid`, or the
+first that applies of `revoked`, `suspended` (its flags), `product-locked` (its product locked or gone),
+`not-started`, `ended`. A state answers `flags` with `PhisEntitlementStateFlag.Entitled`. `list` takes `flags`
+(`PhisEntitlementListFlag.ResolveBundles`) instead of `resolveBundles`, `update` takes `setFlags` and
+`clearFlags` (only `PhisEntitlementFlag.Suspended`, not both for the same bit) instead of `suspended`; another
+bit throws. `listNamed({ entries })` reads up to 100 named entries -- `{ source, reference, product, subject? }`
+-- in one statement, one answer per name in the order asked: the entry, or `null` where there is none or it is
+not `subject`'s (else the acting person's; with nobody acting a name without a subject answers `null`).
+Another person's entry is not found, never refused.
 
 **Reads are open** to every Add-on that requires the capability, and cover the entries of every source.
 `subject()` and a call without a subject act for the acting user; with nobody acting there is no subject,
@@ -2013,7 +2027,7 @@ products and throws beyond, and throws for an entry that is not a product id (wh
 non-id as held by nobody); an empty list answers an empty one without a read. A licence of a bundle of
 twenty parts refreshes with one call rather than twenty. `list({ subjects })` lists the entries of several
 subjects in one statement -- an Admin table of keys asks for its page at once rather than per row --
-narrowed by `product` and `resolveBundles` as for one subject, in id order, each entry naming its subject.
+narrowed by `product` and the `ResolveBundles` list flag as for one subject, in id order, each entry naming its subject.
 It takes at most 100 subjects and throws beyond, for an entry that is not a string, and beside `subject`;
 an empty list answers nothing without a read, and a reference that is nobody on the Site has no entries.
 A listing answers at most 500 entries, for one subject as for several: one that would hold more throws
@@ -2030,16 +2044,15 @@ it holds only for the call; writing for the subject is `grant`'s question, as fo
 comes from the Site member picker, `GET /api/site/members` (`{ items: [{ userId, displayName }] }`, searched
 by name, address or telephone number, a page at a time), which is open to the same staff, so whoever may name a member here
 can find them there; the Site UI offers it to any Form's select as Core's options Provider
-`PHI_CORE_RUNTIME_DATA_PROVIDER_KEYS.siteMembers`. `list({ product, resolveBundles: true })` also lists the subject's entries on
+`PHI_CORE_RUNTIME_DATA_PROVIDER_KEYS.siteMembers`. `list({ product, flags: PhisEntitlementListFlag.ResolveBundles })` also lists the subject's entries on
 every bundle that contains the product, directly or through nested bundles and whatever the bundle's
-state, each entry as it is (its `product` is the bundle's id, its `valid` its own); absent or false lists
-the product's own entries only, and without `product` it changes nothing. `resolveBundles` is a boolean or
-absent; anything else throws.
+state, each entry as it is (its `product` is the bundle's id, its `standing` its own); without the bit it lists
+the product's own entries only, and without `product` it changes nothing.
 
 **Writing.** `grant` and `update` are refused (the call throws) unless the calling Add-on may write for
 the product: the Site's operator allowed it, for every product or for the products of the product's
 supplier (`phis entitlement source allow`, one row per source and Site in `entitlement_sources`), or the
-caller is the product's supplier and the product is `free`. `grant` is also refused for a new entry when
+caller is the product's supplier and the product carries `PhisProductFlag.Free`. `grant` is also refused for a new entry when
 the product does not exist or is not `active`; the check is made under a lock on the product, so it cannot
 be removed or moved in between. `grant` is idempotent on `(product, reference)`: a second call answers the
 first entry unchanged, emits nothing and is not refused for the product's state, so a payment handler
@@ -2203,6 +2216,33 @@ Page's words are, by the same people, the same files and the same provider. `rec
   stored row. The Shop's listing hint is the first user (phis-shop README, "A listing's hint").
 - **At most** `PHIS_ADDON_TRANSLATION_TEXTS_MAX` texts per call, each at most `PHIS_ADDON_TRANSLATION_TEXT_MAX`
   characters.
+
+### `billing:v1`
+
+`@phis/server/billing:v1` (`@phis/contracts/billing`, `PhisBillingCapabilityV1`; owner, 2026-11-27): every
+billing document of the Site in one place -- the Provider's, archived by Core after a payment, and those
+Add-ons issue -- read by the access rules of PAYMENTS.md section 16. The capability: `list`, `get`, `open`,
+`issue`, `attachFile`, `void`, `setPaymentState`, `listSeries`. An unverified hook reaches none of it.
+
+- **Reading.** Without `subject`, `list` answers what the Add-on issued and what documents its own sales
+  (`consumerAddonId`); `references` (at most 100) narrows to its own sales' references; with `subject` it
+  answers that person's documents across issuers, and only for an acting person who is that subject or holds
+  the Site role Admin or Accountant (otherwise it throws). Newest first, `limit` 1 to 100 (default 50), the
+  answer's `cursor` to go on. `get` answers `null` for a document the caller may not read. `open` answers a
+  signed address (300 seconds by default, at most 900) for an acting person who may open the document, and
+  throws for a document that is not `available`.
+- **Issuing.** The manifest states the kinds the Add-on issues, `billing: { issues: [...] }` (only with
+  `billing:v1` required), and the Site's operator allows it as a source for some of them (`phis billing source
+  allow --site <key> --addon <id> --kinds invoice,credit-note`); an Add-on issues for another Add-on's sales
+  only where that one's manifest names it in `billing.issuedBy`. `issue` writes the document and, for an
+  invoice, credit note or reminder, numbers it from the open series of the key it names, which must list the
+  Add-on in its sources and the kind in its kinds. `listSeries` answers the open series it may number from.
+  `attachFile` streams the PDF of a `pending` document once (size and sha256 checked); `void` withdraws one
+  still `pending`; `setPaymentState` is the issuer's, for an invoice or reminder. Every refusal throws a
+  `PhisBillingError` with its code.
+- **The event.** `billing-document.changed` (`{ kind: "billing-document", documentId, reference, version }`,
+  no state) reaches the document's source Add-on and, where different, its consumer Add-on, where they
+  declare a handler.
 
 ### `cdn:v1`
 

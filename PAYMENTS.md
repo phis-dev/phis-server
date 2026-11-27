@@ -86,10 +86,10 @@ merchant. A browser knowing a payment id is not entitled to operate it.
 Core additionally enforces the configured merchant-action policy for capture, cancel and refund:
 Site Admin, a declared role of the consuming Add-on, or an explicitly authorized system context. A
 job or verified event may be such a context; an ordinary request labelled `internal` by a Site proxy
-is not sufficient. Unverified external hooks cannot use these consumer methods, with one exception:
-`profileReach` reads what Core recorded of a profile's Merchant of Record reach and names nothing of a
-payment, a customer or the account, so a public hook may call it (section 14). Every other operation,
-including every other one under the grant `read`, refuses a hook with `forbidden`.
+is not sufficient. Unverified external hooks cannot use these consumer methods, with two exceptions:
+`profileFeatures` and `chooseCollection` read what Core recorded of a profile's declarations and name
+nothing of a payment, a customer or the account, so a public hook may call them (section 14). Every other
+operation, including every other one under the grant `read`, refuses a hook with `forbidden`.
 
 `complete` is the customer-flow continuation: it can only advance the previously agreed payment,
 using its stored provider binding and amount. It cannot change the amount, turn manual capture into
@@ -102,456 +102,42 @@ The following declarations are exported from `@phis/contracts/payments`. Runtime
 required in addition to these types. The capability and Provider interfaces are server-only in use;
 a Site may import checkout-plan types without receiving a capability or merchant credentials.
 
-```ts
-export type PhisPaymentId = string;
-export type PhisPaymentOperationId = string;
-export type PhisPaymentRefundId = string;
+The declarations themselves are not copied here: `@phis/contracts/payments` (`src/payments.ts`) is the
+contract, and a copy beside it drifted (owner, 2026-11-27). What this document states is what Core does with
+them. Since phis-contracts 0.9 every yes/no fact of a record is a bit of a `flags` number, read against the
+flag object named beside it, never a boolean (13.1 item 28 of the Shop's PLANS.md):
 
-export type PhisPaymentMoney = {
-  /** Uppercase ISO currency code; one agreed currency for the whole payment. */
-  currency: string;
-  /** Canonical non-negative integer string of minor units, never floating-point money. */
-  minor: string;
-};
+| Record | Flag object | Bits |
+| --- | --- | --- |
+| `PhisPayment.flags` | `PhisPaymentFlag` | `ReconciliationRequired` |
+| `PhisPaymentFeatures.flags` | `PhisPaymentFeatureFlag` | `PartialCapture`, `Cancel`, `Refund`, `PartialRefund` (only with `Refund`) |
+| `PhisPaymentStoredFeatures.flags` | `PhisPaymentStoredFeatureFlag` | `Expires` |
+| `PhisPaymentPricingFeatures.flags` | `PhisPaymentPricingFeatureFlag` | `CollectsCustomerDetails`, `CollectsTaxIds` |
+| `PhisPaymentAddition.flags` | `PhisPaymentAdditionFlag` | `Inclusive` (never on a `discount`) |
+| `PhisPaymentSubscription.flags` | `PhisPaymentSubscriptionFlag` | `CustomerActionRequired`, `CancelAtPeriodEnd` |
+| `PhisPaymentScheduleFeatures.flags` | `PhisPaymentScheduleFeatureFlag` | `IntervalChange`, `ChangedOutside` (prepared) |
+| `PhisPaymentCurrencyFeatures.flags` | `PhisPaymentCurrencyFeatureFlag` | `SettlementRecords` |
+| `PhisPaymentDocumentFeatures.kinds[].flags` | `PhisPaymentDocumentFeatureFlag` | `Fetchable`, `Delayed` |
 
-export type PhisPaymentCaptureMode = "automatic" | "manual";
-export type PhisPaymentCheckoutKind = "redirect" | "provider-ui";
+A method's features (`probe`, `listMethods`) carry, beside capture modes, checkout kinds, pricing, `stored`
+and `checkoutExpiry`: `collection` (which collection modes it can run under the probed policy, section 13),
+`currency` (required: amounts, conversion, conversion currencies and cost, the merchant's settlement
+currencies, `SettlementRecords`; section 15) and `documents` (the kinds the Provider issues, each `Fetchable`
+and/or `Delayed`, and the issuer under the policy; section 16). Core validates each declaration and refuses
+a probe with a bit or a key it does not know (`profile_unavailable`). `PhisPaymentObservedTotals.presentment`
+is what the customer was shown in their own currency where the Provider converted; Core stores it with the
+totals, never sums it, and refuses one in the payment's own currency. It may arrive after the total became
+binding, which no other part of the totals may.
 
-export type PhisPaymentFeatures = {
-  captureModes: readonly PhisPaymentCaptureMode[];
-  checkoutKinds: readonly PhisPaymentCheckoutKind[];
-  canPartialCapture: boolean;
-  canCancel: boolean;
-  canRefund: boolean;
-  canPartialRefund: boolean;
-  pricing: PhisPaymentPricingFeatures;
-};
+Error codes beyond those of a single payment: `rate_limited` (section 14) and `quote_outdated` (a change that
+now costs more than the `expectedDue` the customer was shown, section 13).
 
-export type PhisPaymentMethod = {
-  profileKey: string;
-  methodKey: string | null;
-  title: string;
-  features: PhisPaymentFeatures;
-};
-
-export type PhisPaymentCheckoutPlan =
-  | {
-      kind: "redirect";
-      url: string;
-      expiresAt: string | null;
-    }
-  | {
-      kind: "provider-ui";
-      moduleId: string;
-      adapterKey: string;
-      parameters: Readonly<Record<string, string>>;
-      expiresAt: string | null;
-    };
-
-export type PhisPaymentStatus =
-  | "created"
-  | "awaiting_customer"
-  | "processing"
-  | "authorized"
-  | "captured"
-  | "canceled"
-  | "expired"
-  | "failed";
-
-export type PhisPayment = {
-  id: PhisPaymentId;
-  reference: string;
-  profileKey: string;
-  mode: "test" | "live";
-  /** The consumer's base amount; the customer pays `totals.total` once the Provider reports it. */
-  amount: PhisPaymentMoney;
-  pricing: PhisPaymentPricing;
-  totals: PhisPaymentTotals | null;
-  captureMode: PhisPaymentCaptureMode;
-  status: PhisPaymentStatus;
-  authorizedMinor: string;
-  capturedMinor: string;
-  refundedMinor: string;
-  authorizationExpiresAt: string | null;
-  checkout: PhisPaymentCheckoutPlan | null;
-  reconciliationRequired: boolean;
-  version: number;
-  lastObservedAt: string | null;
-};
-
-export type PhisPaymentErrorCode =
-  | "invalid_input"
-  | "not_found"
-  | "forbidden"
-  | "profile_unavailable"
-  | "method_unavailable"
-  | "unsupported_operation"
-  | "invalid_state"
-  | "active_attempt_exists"
-  | "idempotency_conflict"
-  | "payment_declined"
-  | "provider_rejected"
-  | "provider_unavailable"
-  | "reconciliation_required";
-
-export type PhisPaymentOperation = {
-  id: PhisPaymentOperationId;
-  paymentId: PhisPaymentId;
-  action: "create" | "complete" | "capture" | "cancel" | "refund";
-  state: "reserved" | "pending" | "succeeded" | "failed" | "indeterminate";
-  errorCode: PhisPaymentErrorCode | null;
-};
-
-export type PhisPaymentRefund = {
-  id: PhisPaymentRefundId;
-  paymentId: PhisPaymentId;
-  amount: PhisPaymentMoney;
-  /** The tax or discount share of this refund when the Provider reports one; informational. */
-  additions: readonly PhisPaymentAddition[] | null;
-  status: "pending" | "succeeded" | "failed" | "canceled";
-};
-
-export type PhisPaymentCommandResult = {
-  operation: PhisPaymentOperation;
-  payment: PhisPayment;
-  refund: PhisPaymentRefund | null;
-};
-
-export type PhisPaymentCreateInput = {
-  profileKey: string;
-  reference: string;
-  idempotencyKey: string;
-  amount: PhisPaymentMoney;
-  pricing: PhisPaymentPricing;
-  description: string;
-  captureMode: PhisPaymentCaptureMode;
-  methodKey: string | null;
-  checkoutKind: PhisPaymentCheckoutKind;
-  returnPath: string;
-};
-
-export type PhisPaymentCommandInput = {
-  paymentId: PhisPaymentId;
-  idempotencyKey: string;
-};
-
-export interface PhisPaymentsCapabilityV1 {
-  listProfiles(): Promise<readonly PhisPaymentProfileSummary[]>;
-  listMethods(input: {
-    profileKey: string;
-    amount: PhisPaymentMoney;
-    captureMode: PhisPaymentCaptureMode;
-    checkoutKind: PhisPaymentCheckoutKind;
-    pricing: PhisPaymentPricingSelector;
-  }): Promise<readonly PhisPaymentMethod[]>;
-  /** Core binds Site/consumer/profile; the consumer checks access to its business resource. */
-  create(input: PhisPaymentCreateInput): Promise<PhisPaymentCommandResult>;
-  get(paymentId: PhisPaymentId): Promise<PhisPayment | null>;
-  getOperation(operationId: PhisPaymentOperationId): Promise<PhisPaymentOperation | null>;
-  getRefund(refundId: PhisPaymentRefundId): Promise<PhisPaymentRefund | null>;
-  /** Customer continuation; never captures a manually authorized payment. */
-  complete(input: PhisPaymentCommandInput): Promise<PhisPaymentCommandResult>;
-  /** Explicit bounded reconciliation that may update state and enqueue a consumer event. */
-  refresh(paymentId: PhisPaymentId): Promise<PhisPayment | null>;
-  /** One final merchant-authorized capture; minor units inherit the stored currency. */
-  capture(input: PhisPaymentCommandInput & {
-    minor: string;
-  }): Promise<PhisPaymentCommandResult>;
-  cancel(input: PhisPaymentCommandInput): Promise<PhisPaymentCommandResult>;
-  /** Merchant-authorized refund; pending/unknown amounts reserve the captured balance. */
-  refund(input: PhisPaymentCommandInput & {
-    minor: string;
-    reason: string;
-  }): Promise<PhisPaymentCommandResult>;
-}
-
-export type PhisPaymentProviderConfigV1 = {
-  profileKey: string;
-  mode: "test" | "live";
-  merchantIdentity: string | null;
-};
-
-export type PhisPaymentProviderContextV1 = {
-  providerKey: string;
-  readCredentials(): Promise<Readonly<Record<string, string>> | null>;
-};
-
-export type PhisPaymentProviderBinding = {
-  reference: string;
-  data: Readonly<Record<string, string>>;
-};
-
-export type PhisPaymentProviderProbe = {
-  merchantIdentity: string;
-  mode: "test" | "live";
-  methods: readonly Omit<PhisPaymentMethod, "profileKey">[];
-};
-
-export type PhisPaymentProviderObservation = {
-  binding: PhisPaymentProviderBinding;
-  merchantIdentity: string;
-  mode: "test" | "live";
-  status: PhisPaymentStatus;
-  /** The base amount as created; a Provider never changes it. */
-  amount: PhisPaymentMoney;
-  /** Null only while the Provider cannot yet know the total; required from `authorized` on. */
-  totals: PhisPaymentObservedTotals | null;
-  authorizedMinor: string;
-  capturedMinor: string;
-  authorizationExpiresAt: string | null;
-  checkout: PhisPaymentCheckoutPlan | null;
-  /** Complete refund observations, including remote refunds created outside Core. */
-  refunds: readonly {
-    operationId: PhisPaymentOperationId | null;
-    binding: PhisPaymentProviderBinding;
-    minor: string;
-    status: PhisPaymentRefund["status"];
-    additions: readonly PhisPaymentAddition[] | null;
-  }[];
-};
-
-export type PhisPaymentProviderCommand = {
-  operationId: PhisPaymentOperationId;
-  paymentId: PhisPaymentId;
-  providerIdempotencyKey: string;
-  signal: AbortSignal;
-} & (
-  | {
-      action: "create";
-      amount: PhisPaymentMoney;
-      pricing: PhisPaymentPricing;
-      description: string;
-      captureMode: PhisPaymentCaptureMode;
-      methodKey: string | null;
-      checkoutKind: PhisPaymentCheckoutKind;
-      returnUrl: string;
-      notificationUrl: string;
-    }
-  | { action: "complete" | "cancel"; binding: PhisPaymentProviderBinding }
-  | { action: "capture"; binding: PhisPaymentProviderBinding; minor: string }
-  | { action: "refund"; binding: PhisPaymentProviderBinding; minor: string; reason: string }
-);
-
-export type PhisPaymentProviderExecution =
-  | {
-      outcome: "applied" | "pending";
-      observation: PhisPaymentProviderObservation;
-    }
-  | { outcome: "rejected"; code: PhisPaymentErrorCode }
-  | { outcome: "unknown" };
-
-export type PhisPaymentProviderNotification =
-  | { outcome: "verified"; deliveryId: string; reference: string }
-  | { outcome: "lookup-required"; reference: string }
-  | { outcome: "irrelevant" }
-  | { outcome: "rejected" }
-  | { outcome: "unavailable" };
-
-export interface PhisPaymentProviderV1 {
-  probe(input: {
-    amount: PhisPaymentMoney;
-    captureMode: PhisPaymentCaptureMode;
-    checkoutKind: PhisPaymentCheckoutKind;
-    pricing: PhisPaymentPricingSelector;
-    signal: AbortSignal;
-  }): Promise<PhisPaymentProviderProbe>;
-  execute(input: PhisPaymentProviderCommand): Promise<PhisPaymentProviderExecution>;
-  observe(input: {
-    binding: PhisPaymentProviderBinding;
-    signal: AbortSignal;
-  }): Promise<PhisPaymentProviderObservation>;
-  /** Recover the same command; never replace its key, merchant, mode or Provider. */
-  recover(input: {
-    command: PhisPaymentProviderCommand;
-    binding: PhisPaymentProviderBinding | null;
-  }): Promise<PhisPaymentProviderExecution>;
-  verifyNotification(input: {
-    method: string;
-    headers: Readonly<Record<string, string>>;
-    body: Uint8Array;
-    signal: AbortSignal;
-  }): Promise<PhisPaymentProviderNotification>;
-}
-
-export interface PhisPaymentNotificationsCapabilityV1 {
-  receive(input: {
-    profileKey: string;
-  }): Promise<{ outcome: "processed" | "duplicate" | "ignored" }>;
-}
-
-export type PhisPaymentGrantedOperation =
-  | "read"
-  | "create"
-  | "complete"
-  | "refresh"
-  | "capture"
-  | "cancel"
-  | "refund";
-
-export type PhisPaymentMerchantActionPolicy = {
-  roles: readonly string[];
-  jobs: readonly string[];
-  events: readonly string[];
-};
-
-export type PhisPaymentProfileGrant = {
-  consumerAddonId: string;
-  operations: readonly PhisPaymentGrantedOperation[];
-  merchantActions: {
-    capture: PhisPaymentMerchantActionPolicy;
-    cancel: PhisPaymentMerchantActionPolicy;
-    refund: PhisPaymentMerchantActionPolicy;
-  };
-};
-
-/** Operator-controlled references and grants; contains no credential values. */
-export type PhisPaymentProfileDraft = {
-  key: string;
-  providerKey: string;
-  mode: "test" | "live";
-  credentialReferences: Readonly<Record<string, string>>;
-  grants: readonly PhisPaymentProfileGrant[];
-};
-
-/** A payment event reaches only the consuming Add-on stored on that payment. */
-export type PhisPaymentChangedEventFacts = {
-  event: "payment.changed";
-  subject: {
-    kind: "payment";
-    paymentId: PhisPaymentId;
-    reference: string;
-    version: number;
-    operationId: PhisPaymentOperationId | null;
-    refundId: PhisPaymentRefundId | null;
-  };
-};
-
-/*
- * Pricing: how a consumer lets a Provider add tax, shipping and discounts to its base amount, and how
- * the Provider reports the customer's total with its parts. PAYMENTS.md section 12 states the rules Core
- * enforces; a Provider documents its mapping of the closed tax-category vocabulary to its own codes.
- */
-
-export type PhisPaymentPricingBasis = "final" | "net";
-export type PhisPaymentTaxHandling = "none" | "provider" | "merchant-of-record";
-export type PhisPaymentPromotionCodes = "none" | "provider";
-
-/** What is sold, never a rate; each Provider maps the closed vocabulary to its own codes. */
-export type PhisPaymentTaxCategory =
-  | "general"
-  | "reduced-goods"
-  | "digital-goods"
-  | "digital-service"
-  | "service"
-  | "shipping"
-  | "exempt";
-
-export type PhisPaymentLineItem = {
-  reference: string;
-  description: string;
-  quantity: number;
-  unitMinor: string;
-  taxCategory: PhisPaymentTaxCategory;
-  /** Provider-specific code overriding the category mapping, keyed by provider key. */
-  providerTaxCodes: Readonly<Record<string, string>> | null;
-};
-
-/** A reduction the consumer decided; the Provider shows it and taxes the reduced amount. */
-export type PhisPaymentDiscount = {
-  reference: string;
-  label: string;
-  minor: string;
-};
-
-export type PhisPaymentCustomerDetails = {
-  country: string;
-  postalCode: string | null;
-  region: string | null;
-  addressSource: "billing" | "shipping";
-  taxIds: readonly { type: string; value: string }[];
-};
-
-/**
- * `final`/`none` is v1: the base amount is what the customer pays and the Provider adds nothing. Every
- * other policy carries line items; the base amount then equals their sum plus shipping minus discounts.
- */
-export type PhisPaymentPricing =
-  | { basis: "final"; tax: "none" }
-  | {
-      basis: PhisPaymentPricingBasis;
-      tax: PhisPaymentTaxHandling;
-      lineItems: readonly PhisPaymentLineItem[];
-      shipping: { minor: string; taxCategory: "shipping" } | null;
-      discounts: readonly PhisPaymentDiscount[];
-      promotionCodes: PhisPaymentPromotionCodes;
-      customer: PhisPaymentCustomerDetails | null;
-    };
-
-/** The facts of a policy a method must support; `discounts` is the number of stated discounts. */
-export type PhisPaymentPricingSelector = {
-  basis: PhisPaymentPricingBasis;
-  tax: PhisPaymentTaxHandling;
-  discounts: number;
-  promotionCodes: PhisPaymentPromotionCodes;
-};
-
-export type PhisPaymentPricingFeatures = {
-  /** Always includes `final`. */
-  bases: readonly PhisPaymentPricingBasis[];
-  /** Always includes `none`. */
-  tax: readonly PhisPaymentTaxHandling[];
-  /** How many stated discounts one payment may carry; 0 when the Provider shows none. */
-  maxDiscounts: number;
-  /** Whether a customer may enter a code on the Provider's page, and whether next to stated discounts. */
-  promotionCodes: "none" | "alone" | "with-discounts";
-  collectsCustomerDetails: boolean;
-  collectsTaxIds: boolean;
-  /** Present exactly when `tax` includes `merchant-of-record`, `null` otherwise. */
-  merchantOfRecord: PhisPaymentMerchantOfRecordFeatures | null;
-};
-
-/**
- * Where and what the Provider sells as Merchant of Record: the ISO countries it owes the tax for, the
- * categories it admits there, and what a business's VAT id does (`charge`: taxed, reclaimed as input tax;
- * `reverse-charge`: not taxed, a tax-inclusive price reduced by its share). Each list is non-empty and
- * free of repeats. A consumer offers no more than this; Core refuses a probe that states it under any
- * other handling, or leaves it out under this one.
- */
-export type PhisPaymentMerchantOfRecordFeatures = {
-  countries: readonly string[];
-  taxCategories: readonly PhisPaymentTaxCategory[];
-  businessTaxIds: readonly ("charge" | "reverse-charge")[];
-};
-
-export type PhisPaymentAdditionKind = "tax" | "shipping" | "discount";
-
-export type PhisPaymentAddition = {
-  kind: PhisPaymentAdditionKind;
-  minor: string;
-  label: string;
-  /** Contained in the base amount rather than added to it; a `discount` is never inclusive. */
-  inclusive: boolean;
-  /** Display-only decimal string such as "8.1"; never enters Core arithmetic. */
-  rate: string | null;
-  /** ISO country code, optionally followed by "-" and a region. */
-  jurisdiction: string | null;
-  /** Who owes a tax addition to the authority: the merchant, or the Provider as Merchant of Record. */
-  collectedBy: "merchant" | "provider";
-  /** The promotion code or stated discount reference behind a `discount`; null for every other kind. */
-  code: string | null;
-};
-
-export type PhisPaymentObservedTotals = {
-  total: PhisPaymentMoney;
-  additions: readonly PhisPaymentAddition[];
-  customer: PhisPaymentCustomerDetails | null;
-};
-
-export type PhisPaymentTotals = PhisPaymentObservedTotals & {
-  /** Set by Core when the total became binding; a differing total afterwards is an inconsistency. */
-  frozenAt: string | null;
-};
-```
+The grant operations are `read`, `create`, `complete`, `refresh`, `capture`, `cancel`, `refund`,
+`method-store`, `method-read`, `method-remove`, `subscription-read`, `subscription-create`,
+`subscription-cancel`, `subscription-change` (preview, change, take back, list changes and read the credit;
+the payment of `due` also needs `create`, and under `automatic` `method-store`), `document-read` (the
+documents archived for this consumer's payments, through `billing:v1`) and `settlement-read`
+(`listSettlements`, and only for an acting user with the Site role Admin or Accountant).
 
 Money uses an uppercase ISO currency code and a canonical non-negative integer string of minor units:
 `{ currency: "CHF", minor: "1990" }` represents CHF 19.90. No floating-point arithmetic or provider
@@ -569,8 +155,8 @@ method combination. There is no installation-wide or profile-wide single-currenc
 
 `listMethods` is a current availability query, not a promise that a later creation must succeed. Core
 checks availability again when executing. It asks the Provider every time; what a profile sells as
-Merchant of Record is also read from Core's recording, without a Provider call, through
-`profileReach` (section 14). `methodKey: null` means provider-managed selection; it is
+Merchant of Record, and which collection mode a subscription would get, is also read from Core's
+recording, without a Provider call, through `profileFeatures` and `chooseCollection` (section 14). `methodKey: null` means provider-managed selection; it is
 valid only when returned as an available option. Its advertised features are the intersection of the
 methods the Provider can actually offer for that request. Method keys are opaque and profile-bound.
 
@@ -798,6 +384,14 @@ still allows another customer attempt, a declined card does not make the Core pa
 release the business reference for a second checkout. Remote authorization/capture takes precedence
 over checkout expiry. The concrete first-provider mapping is in [PAYMENTS_STRIPE.md](./PAYMENTS_STRIPE.md).
 
+The listing above is the shape before 0.9; `@phis/contracts/payments` is the contract. Since 0.9 a Provider
+also answers, where it declares what needs them: `listDocuments` and `fetchDocument` (required where a method
+declares `documents` with a `Fetchable` kind; section 16), `observeSettlements` (required where a method
+declares `SettlementRecords`; section 15), and observations whose totals carry `presentment`. Core calls
+each only for a payment whose method declared it under the payment's policy, and checks every answer.
+`executeSubscription`, `observeSubscription` and the notification subject `subscription` are prepared for
+`provider-managed` and not called: Core ignores a `subscription` notification until the mode is built.
+
 ## 7. Notifications and consumer events
 
 The Provider declares its external hook in its normal Add-on namespace, for example
@@ -896,7 +490,7 @@ not reuse a reservation or overwrite a newer captured/refunded state with a stal
 ordering cannot be established, Core re-observes instead of guessing from event timestamps.
 
 The local transaction and external API cannot commit together. A crash after remote acceptance leaves
-an operation needing recovery, not a confirmed failure. `reconciliationRequired` is true while any
+an operation needing recovery, not a confirmed failure. the `ReconciliationRequired` bit is set while any
 financial operation has an indeterminate result. Core forbids conflicting commands and a replacement
 attempt until recovery establishes the outcome. Provider idempotency retention is finite; Core does
 not blindly replay an old command beyond the adapter's safe recovery window.
@@ -1008,7 +602,7 @@ of the closed tax-category vocabulary to its own codes.
 | `basis` | `tax` | Meaning | Customer's total |
 | --- | --- | --- | --- |
 | `final` | `none` | v1 behaviour; no line items; the default and the only policy every Provider must support | equals the base amount |
-| `final` | `provider` | gross prices; the Provider reports the tax included | equals the base amount; tax additions are `inclusive` |
+| `final` | `provider` | gross prices; the Provider reports the tax included | equals the base amount; tax additions carry `Inclusive` |
 | `net` | `provider` | net prices; the Provider adds tax on top | base plus exclusive additions |
 | any | `merchant-of-record` | the Provider is the legal seller and owes the tax | as above; tax additions are `collectedBy: "provider"` |
 
@@ -1038,10 +632,10 @@ Provider's create command. The policy is part of the idempotent request.
 `authorized` or `captured` on it is required. When present, Core checks:
 
 - Under `final`/`none` there are no additions and the total equals the base amount.
-- A `tax` addition exists only when the policy's tax handling is not `none`; it is `inclusive`
+- A `tax` addition exists only when the policy's tax handling is not `none`; it carries `Inclusive`
   exactly under `basis: "final"`, and `collectedBy` is `provider` under `merchant-of-record` and
   `merchant` otherwise.
-- A `shipping` addition is `inclusive`, appears once, and only with the policy's shipping line, whose
+- A `shipping` addition carries `Inclusive`, appears once, and only with the policy's shipping line, whose
   amount it repeats.
 - Every stated discount appears exactly once as a `discount` addition whose `code` is its reference
   and whose amount is the stated one. A further `discount` addition is admitted only under
@@ -1078,20 +672,24 @@ Provider mapping is in [PAYMENTS_STRIPE.md](./PAYMENTS_STRIPE.md) section 8.
 ## 13. Stored payment methods and subscriptions
 
 Part of `payments:v1`, extended in place: no further capability, service kind or notification ingress.
-The reasons for each choice are in [design/SUBSCRIPTIONS.md](./design/SUBSCRIPTIONS.md); this section
-is what is built. The types are in `@phis/contracts/payments`, the tables in
+The reasons for each choice are in [design/SUBSCRIPTIONS.md](./design/SUBSCRIPTIONS.md) and, for collection
+modes, grace and changes, in the Shop's design (`phis-shop/design/PLANS.md`, sections 5 and 7, decided
+2026-11-27); this section is what is built. The types are in `@phis/contracts/payments`, the tables in
 [DB.md](./DB.md#phispayment_stored_methods).
 
-**Who owns what.** Core owns the schedule, the retries and the end of a subscription. A Provider only
-stores a payment method while the customer is present and charges it later without them; it runs no
-schedule, issues no invoice and decides no retry. The consumer states the price and owns the service
-state and the billing document. Payment details never reach phis.
+**Who owns what.** Core owns the schedule, the retries, the requests and the end of a subscription. A
+Provider stores a payment method while the customer is present and charges it later without them, or
+offers a checkout for a period the customer is asked to pay; it runs no schedule and decides no retry. The
+consumer states the price and owns the service state. Payment details never reach phis.
 
-**Declared per method.** `PhisPaymentFeatures.stored` says whether a method can be stored and how:
-`setup` (`with-payment`, `alone`), `chargeResult` (`notified`, `immediate`), `expires`, `perPayer`
-(`single`, `many`) and the `pricing` a charge without a checkout can carry. Absent or `null` means not
-storable, which is every Provider built before this section. Core holds no list of method names.
-`listMethods` and `probe` take `usage: "recurring"` and then answer only what can be stored.
+**Declared per method and policy.** `PhisPaymentFeatures.stored` says whether a method can be stored and
+how: `setup` (`with-payment`, `alone`), `chargeResult` (`notified`, `immediate`), the `Expires` bit,
+`perPayer` (`single`, `many`) and the `pricing` a charge without a checkout can carry. `collection` says,
+per collection mode, which interval units and the longest period the method runs under the probed policy:
+`automatic` (requires `stored`; Core refuses a declaration of it without), `paymentRequest`, and
+`providerManaged` (prepared, below). `listMethods` and `probe` take `usage: "recurring"` and then answer
+only the methods that can collect a subscription in a mode Core runs: stored with `collection.automatic`,
+or with `collection.paymentRequest`. Core holds no list of method names.
 
 **Stored methods.** `create` with `store` stores the method the customer pays with (`with-payment`);
 `setupMethod` opens a hosted page on which a method is stored and nothing is charged (`alone`). Either
@@ -1104,132 +702,265 @@ a new one revokes the others and takes over their subscriptions. Storing needs t
 
 **A charge without the customer** is an ordinary payment with `initiator` `schedule` or `merchant`, no
 checkout, and operation action `charge`. It is not a consumer method: Core makes it for a subscription
-period, idempotent on a key derived from the subscription, the period and the attempt. Its answer is
-one of three: paid (or pending where `chargeResult` is `notified`); failed with `payment_declined`; or
-failed with `customer_action_required` or `stored_method_unavailable`, after which no retry can succeed
-without the payer. An unknown outcome is recovered, never sent again.
+period under `automatic`, idempotent on a key derived from the subscription, the period and the attempt.
+Its answer is one of three: paid (or pending where `chargeResult` is `notified`); failed with
+`payment_declined`; or failed with `customer_action_required` or `stored_method_unavailable`, after which
+no retry can succeed without the payer. An unknown outcome is recovered, never sent again.
 
-**Subscriptions.** `createSubscription` stores the agreement as `pending` and opens its first payment,
-which stores the method. It is `active` from that payment's capture, which starts the first period, and
-`canceled` if that payment ends without one. Every boundary is computed from the start of the first
-period and the period index, so neither a late charge nor a short month moves the schedule. Each period
-is one row and is settled in the transaction of the payment that pays it; the payment carries
-`subscriptionId` and `periodIndex` and is referenced `<subscription reference>#<index>`.
+### 13.1 Collection modes
+
+`PhisPaymentSubscriptionCreateInput.collection` says how the periods after the first are paid; it is
+recorded on the subscription and never changes by itself. The consumer derives it from what the profile
+declares (`chooseCollection`, section 14); `createSubscription` confirms it with a live `listMethods`
+(`usage: "recurring"`): the method must collect in that mode for the interval, and carry the recurring
+pricing -- `stored.pricing` under `automatic`, the method's checkout `pricing` under `payment-request`.
+
+| Mode | Who runs the schedule | How a period is paid | Built |
+| --- | --- | --- | --- |
+| `automatic` | Core | Core charges the stored method; a decline is retried by `dunning.retryAfterDays` | yes |
+| `payment-request` | Core | `leadDays` before the paid period ends Core opens the next one and asks the customer to pay it on a checkout (`settleSubscription`), as a one-time payment; nothing is stored | yes |
+| `provider-managed` | the Provider | the Provider charges and retries; Core would mirror it | prepared only: refused with `unsupported_operation`, recorded as not usable, never answered by `chooseCollection`; a notification with `subject: "subscription"` is ignored |
+
+The first payment stores the method only under `automatic`. `replaceSubscriptionMethod` is only for
+`automatic` (`unsupported_operation` otherwise).
+
+### 13.2 Grace, lead and the end
+
+- **`graceDays`** (every mode, whole days 0 to 30, below the shortest period of the interval; the Site-wide
+  `entitlement_grace_days` is gone): an entitlement bound to the subscription counts until the latest paid
+  period's end plus `graceDays` while the subscription has not ended, until the period's end once it has.
+  Each period records `graceEndsAt` (its start plus the grace). **A period still unpaid when its grace ends
+  has failed, and the subscription ends (`canceled`)**, in every mode. There is no `unpaid` state.
+- **`leadDays`** (`payment-request` only, 0 to 30, below the shortest period): the next period is opened
+  that many days before the paid period ends. Paying early moves no boundary.
+- **Dunning** (`automatic`): `retryAfterDays`, at most 8, strictly later each time, counted from the day
+  the period fell due, and none past `graceDays` (refused otherwise). With a grace of 0 a declined renewal
+  ends the subscription at once. Without a further attempt the customer may still settle the open period
+  until the grace ends. Where the customer has to return (`CustomerActionRequired`), no attempt is made
+  and the grace's end is the end; `replaceSubscriptionMethod` clears the bit and the schedule tries again.
 
 | Status | Means |
 | --- | --- |
 | `pending` | the first payment is open |
-| `active` | the latest period is paid; `nextChargeAt` is its end |
-| `past_due` | a renewal failed; Core retries by the dunning policy, or waits for the customer where `customerActionRequired` |
-| `unpaid` | the policy is used up; nothing more is charged until the customer settles or somebody ends it |
-| `canceled` | final |
+| `active` | the latest period is paid; under `payment-request` a requested period may be open (`CustomerActionRequired`) |
+| `past_due` | the paid period ended and the next is unpaid: retried under `automatic`, waited for under `payment-request`, until the grace ends |
+| `canceled` | final: cancelled, ended at once, the first payment never captured, or a period unpaid at the grace's end |
 
-**Dunning.** The consumer states `retryAfterDays` (at most 8 attempts, each within 60 days, counted from
-the day the period fell due) and `onExhausted` (`unpaid` or `cancel`); the default is 3, 5 and 7 days,
-then `unpaid`. Where the customer has to return, no attempt is made and the wait ends when the last
-attempt would have been made. `settleSubscription` is the customer paying the open period on a
-checkout, which stores the method anew and makes the subscription `active` again.
+**A `payment-request` period.** With E the paid period's end, L the lead and G the grace, each moment is
+said once, as `payment.changed` with the subscription subject and its `moment`:
 
-**Ending and changing.** `cancelSubscription` at `period-end` charges nothing further and ends the
+| When | What Core does | `moment` |
+| --- | --- | --- |
+| E − L | opens period n+1 (`requestedAt`), sets `CustomerActionRequired`; a scheduled change is applied first | `requested` |
+| E − 3 days, only where it lies after the request | nothing but the fact | `reminder` |
+| E, still unpaid | `past_due` | `due` |
+| E + G − 1 day, only where G ≥ 2 | nothing but the fact | `grace-ending` |
+| E + G, still unpaid | the period `failed`, the subscription `canceled` | -- |
+
+No payment is opened at E − L (a checkout cannot stay open for weeks): the customer pays through
+`settleSubscription`, which is allowed for a requested period while the subscription is `active` and for
+any `past_due` period, until its grace ends, and stores nothing under `payment-request`. On capture the
+period is paid, the subscription is `active` without `CustomerActionRequired`, and `nextChargeAt` is the
+next request date (E′ − L). `nextChargeAt` is always when Core next acts on its own: a renewal or a retry
+under `automatic`, a request, a reminder or the grace's end under `payment-request`.
+
+**Terms.** Boundaries are computed from the start of the current term (`term.startsAt`, the column
+`anchor_at`) and the period index less `term.firstIndex` (`term_first_index`), never from the day a charge
+happened to succeed, so neither a late charge nor a short month moves them. A subscription that never
+changed has one term from its first period; an applied change starts a new one. Each period is one row,
+settled in the transaction of the payment that pays it; the payment carries `subscriptionId` and
+`periodIndex` and is referenced `<subscription reference>#<index>`.
+
+### 13.3 Changes of terms
+
+A subscription changes what its periods cost, how long they are, its grace and (under `payment-request`)
+its lead with `changeSubscription`, under the grant `subscription-change` (and `create` for the payment of
+`due`). Only an `active` subscription without `CancelAtPeriodEnd`, a pending change or an open period
+changes, in its currency, at its profile and in its collection mode; the new recurring pricing must be one
+the stored method can carry under `automatic`.
+
+- **Quote (`previewSubscriptionChange`), one rule:** `credit = floor(R × (periodEnd − at) / (periodEnd −
+  periodStart))` by the second, rounded down in the customer's favour, summed over the paid periods that
+  have not ended by `at` (the running one and, under `payment-request`, a requested one paid early). `R` is
+  the recurring amount the period was charged under less what was refunded of its payment; period 0 counts
+  the subscription's `recurring` at the start, never the one-time part of `first`. `charge` is the first
+  period under the new terms plus `oneTime`; `due = charge − credit`. A credit beyond the charge is
+  refused (`invalid_input`): that is a downgrade, which goes at the period end. No credit balance is kept.
+  `period-end` quotes credit and due 0 and the boundary as `effectiveAt`.
+- **`period-end`** stores the change `scheduled`. The schedule applies it before it charges or requests
+  the next period: a new term starts at the boundary and the period costs the new terms.
+- **`now` with nothing due** is applied at once. **With something due** the change is `awaiting_payment`
+  and Core creates its payment (`<subscription reference>~<change reference>`, `initiator: "customer"`, with
+  `store` under `automatic`) on the checkout the consumer names; the credit is a stated discount "Credit for
+  the unused part of the current period" where the pricing carries line items. On capture, in that
+  payment's transaction, the paid period ends there (`endedEarlyAt`), a new term starts with a paid period
+  under the new terms (`changeId` on it), the stored method becomes the one the payment stored under
+  `automatic`, and the renewal or request date moves to the new period's end. An entitlement bound to the
+  subscription follows by itself.
+- **`expectedDue`**: the due the customer was shown; a quote that now costs more, or a subscription that
+  moved between quote and change, answers `quote_outdated`. Idempotent on `idempotencyKey`.
+- **Void:** the payment of `due` ends unpaid, `cancelSubscriptionChange` takes it back (and Core ends its
+  checkout where the method can be cancelled), a renewal falls due or a period is requested first, the
+  subscription is cancelled at the period end or ends. A voided change changed nothing; a payment captured
+  after its change was void is the consumer's to refund. `CancelAtPeriodEnd` voids a scheduled change and
+  resuming does not bring it back. `changeSubscriptionPrice` is refused while a change is pending.
+- `listSubscriptionChanges` answers newest first; `subscriptionCredit` the credit now, for a consumer that
+  ends the subscription for a purchase. Each change, schedule, application and void is `payment.changed`
+  with the subscription subject and its `changeId`.
+
+**Ending.** `cancelSubscription` at `period-end` charges or requests nothing further and ends the
 subscription with the paid period; `resumeSubscription` takes it back until then. A subscription with
 nothing paid ahead ends at once. `now` ends a paid subscription at once and is a merchant action under
-`merchantActions.subscriptionEnd`; it refunds nothing. `changeSubscriptionPrice` replaces what every
-later period costs, under `merchantActions.subscriptionPrice`, in the same currency and within what the
-stored method can be charged; a period that already exists keeps its amount. Both policies are optional
-and absent means nobody.
+`merchantActions.subscriptionEnd`; it refunds nothing. `changeSubscriptionPrice` replaces what every later
+period costs, under `merchantActions.subscriptionPrice`, in the same currency and, under `automatic`,
+within what the stored method can carry; a period that already exists keeps its amount.
 
-**The schedule** is the Core job `payments.subscriptions.advance`, every five minutes: it takes what is
-due under a lease, acts as nobody with the consumer's scope and grant, and never charges while an
-earlier payment for the same period is unresolved. A charge that could not be made at all (a disabled
-profile, a withdrawn grant) uses no attempt; it is logged and looked at again in an hour.
+**The schedule** is the Core job `payments.subscriptions.advance`, every five minutes: it takes what is due
+under a lease, acts as nobody with the consumer's scope and grant, and never charges while an earlier
+payment for the same period is unresolved. A charge that could not be made at all (a disabled profile, a
+withdrawn grant) uses no attempt; it is logged and looked at again in an hour.
 
-**Events.** `payment.changed` has two subjects: a payment, and a subscription with the period it
-concerns. A renewal produces both, and a handler narrows on `subject.kind`.
+**Events.** `payment.changed` has two subjects: a payment, and a subscription with the period it concerns,
+the change (`changeId`) and the moment of a requested period (`moment`) where it is about one. A renewal
+produces both, and a handler narrows on `subject.kind`.
 
 **Grants.** `method-store`, `method-read`, `method-remove`, `subscription-read`, `subscription-create`
-(also needs `create` and `method-store`; it is also what a price change asks for) and
-`subscription-cancel` (cancel at the period end, resume, settle, change the method).
+(also needs `create`, and `method-store` under `automatic`; it is also what a price change asks for),
+`subscription-cancel` (cancel at the period end, resume, settle, change the method) and
+`subscription-change`.
 
-**Not built:** trials, pauses, proration, a cancellation at a chosen date, a Provider-run schedule, and
-a notice when several periods are overdue after an outage (they are charged one per run).
+**Not built:** trials, pauses, a cancellation at a chosen date, `provider-managed`, and a notice when
+several periods are overdue after an outage (they are charged one per run).
 
-## 14. Profile reach
+## 14. Profile features and the collection mode
 
-Part of `payments:v1`, extended in place. A consumer that sells under `merchant-of-record` offers only
-what the Provider sells so (section 12), and has to know it where no payment is being made: on a public
-page listing the countries a Shop sells to. Asking the Provider there means a probe per page view (two
-Stripe API calls) from a hook, which may not call the consumer methods at all.
+Part of `payments:v1`, extended in place (phis-contracts 0.9: `profileFeatures`, `refreshProfileFeatures`
+and `chooseCollection` replace `profileReach` and `refreshProfileReach`, owner 2026-11-27). A consumer has
+to know what a profile can do where no payment is being made: which countries a Shop sells to under
+Merchant of Record, which collection mode a plan would get, who issues the documents, whether a currency
+is converted. Asking the Provider there means a probe per page view from a hook.
 
-**The recording.** A probe Core makes is recorded per currency in `phis.payment_profiles.methods`:
-`{ "<CUR>": { probedAt, methods } }`, the methods as validated (DB.md). Core asks with 100 minor units of
-the currency, `automatic` capture, a `redirect` checkout and the pricing `final`/`none`/no
-discounts/`none`. `none` is asked rather than `merchant-of-record` because every method supports it, so the
-Provider answers every method it has, each declaring its own `pricing.merchantOfRecord`; asked for
-`merchant-of-record`, a Provider may leave out what does not sell so (Stripe leaves out TWINT) and the
-recording would be a selection. `probed_at` is the last time Core asked about the profile in any
-currency. Three things record: `phis payment profile probe|enable --currency CHF,EUR` (each named
-currency, after all were answered), `refreshProfileReach`, and `phis addon migrate|reconcile` when it
-registers a new release of the Provider Add-on (docs/CLI.md). A currency not asked keeps its recording;
-`profile set` clears all of it, as it clears the probe.
+**The recording.** `phis.payment_profiles.features` holds, per uppercase currency, a
+`PhisPaymentProfileFeatures`: `{ currency, probedAt, policies }`. Core asks the Provider with 100 minor units
+of the currency, `automatic` capture, a `redirect` checkout, no stated discount and no promotion code, first
+under `final`/`none` -- which every method supports, so the Provider answers every method it has -- and then
+once per further pricing policy the methods declare (`pricing.bases` × `pricing.tax`, `merchant-of-record`
+only where declared), each policy in both usages (one-time and `recurring`). Each `PhisPaymentPolicyRecording`
+is the union over the methods a hosted payment could use: capture modes; `collection` per mode (every unit,
+the longest `maxDays`; `providerManaged` always recorded `null` until built); `currency` (the strictest
+conversion and who bears it, the union of conversion and settlement currencies, the bits OR-ed); `documents`
+(each kind once with its bits OR-ed, the first method's issuer); `merchantOfRecord` (countries, categories,
+business tax id handling). `probed_at` is the last time Core asked about the profile in any currency. Three
+things record: `phis payment profile probe|enable --currency CHF,EUR` (each named currency, after all were
+answered), `refreshProfileFeatures`, and `phis addon migrate|reconcile` when it registers a new release of the
+Provider Add-on (docs/CLI.md). A currency not asked keeps its recording; `profile set` clears all of it.
 
-```ts
-export type PhisPaymentProfileReach = {
-  currency: string;
-  /** When the Provider was last asked in this currency. */
-  probedAt: string;
-  /** Null where no method of the profile sells as Merchant of Record in this currency. */
-  merchantOfRecord: PhisPaymentMerchantOfRecordFeatures | null;
-};
+**`profileFeatures`** reads the recording and never asks the Provider; `null` where the profile was never
+asked in that currency. **`chooseCollection`** answers, from the recording of the currency and the policy of
+`pricing`, the first mode in Core's order -- `automatic`, then `provider-managed` (never answered until
+built), then `payment-request` -- that the consumer allows and that runs the interval (its unit, and its
+longest possible period, months as 31 days and years as 366, within `maxDays`); `null` where none. Both need
+the grant `read` and an enabled profile that is not retired (`profile_unavailable` otherwise), and are the
+operations a hook may call (section 3). A single payment may still be refused, which `create` and
+`createSubscription` decide when it is made.
 
-// Added to PhisPaymentsCapabilityV1:
-profileReach(input: { profileKey: string; currency: string }): Promise<PhisPaymentProfileReach | null>;
-refreshProfileReach(input: { profileKey: string; currencies: readonly string[] }): Promise<readonly PhisPaymentProfileReach[]>;
-
-// Added to PhisPaymentProfileGrant["merchantActions"]:
-profileRefresh?: PhisPaymentMerchantActionPolicy;
-// Added to PhisPaymentErrorCode:
-| "rate_limited";
-```
-
-**`profileReach`** reads the recording and never asks the Provider. It needs the grant `read` and an
-enabled profile that is not retired (`profile_unavailable` otherwise), and answers `null` where the
-profile was never asked in that currency. `merchantOfRecord` is the union over the recorded methods a
-payment could use as asked (automatic capture, hosted checkout): their `countries`, `taxCategories` and
-`businessTaxIds`, each value once in the order first met, `null` where none sells as Merchant of Record.
-It is the one operation a hook may call (section 3). A single payment may still be refused -- its amount,
-the merchant's account -- which `create` decides when it is made.
-
-**`refreshProfileReach`** asks the Provider again, once per currency (1 to 16, each once), validates and
-records each answer as a probe is recorded, and answers the reach of each. It is a merchant action under
-`merchantActions.profileRefresh`, authorized like capture, cancel and refund (operator, Site Admin, a listed
-role, job or event); absent means nobody, and a hook is always refused. It needs the grant `read` and an
-enabled, pinned profile. At most once a minute per profile, counted from `probed_at` and claimed in the
-same statement that moves it, so of two refreshes at once one asks; the other, and any within the
-minute, answer `rate_limited`, which names nothing and changes nothing. A Provider that fails answers
-`provider_unavailable`; a currency recorded before it stays recorded.
+**`refreshProfileFeatures`** asks the Provider again, per currency (1 to 16, each once) and per policy, and
+records and answers each recording. It is a merchant action under `merchantActions.profileRefresh`
+(operator, Site Admin, a listed role, job or event); absent means nobody, and a hook is always refused. At
+most once a minute per profile, counted from `probed_at` and claimed in the same statement that moves it;
+sooner answers `rate_limited`. A Provider that fails answers `provider_unavailable`; a currency recorded
+before it stays recorded.
 
 **The profiles a consumer may choose from.** Where a seller picks a profile -- a Shop's destination -- it
-is chosen from `listProfiles()`, not typed:
+is chosen from `listProfiles()` (`PhisPaymentProfileSummary`: key, provider key and Add-on, mode, and `state`
+`enabled` | `disabled` | `retired`), the Site's profiles whose grant for the calling consumer holds `read`,
+read in one statement. No credentials, grants or merchant identity are named. A hook is refused.
 
-```ts
-export type PhisPaymentProfileSummary = {
-  profileKey: string;
-  providerKey: string;
-  providerAddonId: string;
-  mode: "test" | "live";
-  state: "enabled" | "disabled" | "retired";
-};
-```
+**Before v1** the recording has no other shape. A profile recorded before 0.9 held `methods` (a probe per
+currency); the column goes by hand (DB.md) and every profile is probed again in its currencies.
 
-It names the Site's profiles whose grant for the calling consumer holds `read`, retired ones too, by key,
-read in one statement; a profile without such a grant is not named, as it is `not_found` everywhere else.
-`state` is Core's two columns read as one: `retired`, else `enabled`, else `disabled` (added or changed and
-not enabled since). No credentials, grants or merchant identity are named. A hook is refused (`forbidden`).
-The countries a `merchant-of-record` destination may sell to are then `profileReach` of the chosen profile
-in the destination's currency; a currency never probed answers `null` until `refreshProfileReach`.
+## 15. Records: what was settled
 
-**Before v1** the recording has no other shape. A profile probed before this section holds a list in
-`methods`; it is swept (`methods = NULL`) and probed again in its currencies, by hand.
+Beside the documents (section 16) Core records per captured payment and per succeeded refund what the
+Provider settled on the merchant's balance (`PhisPaymentSettlement`: gross, settled, fee, withheld tax, net,
+exchange rate, available and booked at), where the payment's method declared
+`PhisPaymentCurrencyFeatureFlag.SettlementRecords` under the payment's policy.
+
+- **Collecting.** The transaction that records a capture or a succeeded refund writes a task per kind the
+  method declared (`phis.payment_record_tasks`: `settlements`, and `documents` where a declared kind is
+  `Fetchable`). The Core job `payments.records.collect` (every five minutes, bounded per run) asks
+  `observeSettlements` and records each record once by its reference per profile, never rewritten (a
+  correction is a further record). The task is done once the Provider answers `complete` and the capture
+  or refund it stands for has a record; otherwise it is asked again after 5 minutes, 15 minutes, 1 hour,
+  6 hours, then daily, for 14 days from the fact, and then given up (`failed`). A Provider that cannot be
+  reached uses no attempt; an answer that is refused does.
+- **Checked.** Gross in the payment's currency; settled, fee, withheld tax and net in one settlement
+  currency; `net = settled − fee − withheldTax`; an exchange rate a positive decimal string that never enters
+  Core arithmetic; a refund's record named by a refund Core has observed (another waits for the next
+  attempt). An inconsistent answer is refused (`provider_unavailable`).
+- **Read.** `listSettlements(paymentId)`, oldest first, under the grant `settlement-read` and only for an
+  acting user with the Site role Admin or Accountant (`forbidden` otherwise, and for a job, an event, the
+  operator and a hook). The customer sees only what they paid (`totals`) and, where converted,
+  `presentment`.
+
+## 16. Billing documents (`billing:v1`)
+
+Core keeps every billing document of a Site in one place -- the Provider's, fetched after a payment, and the
+merchant's own, issued by Add-ons -- and shows a person all of theirs and Admin and Accountant all of them
+(`@phis/contracts/billing`, `@phis/server/billing:v1`; owner, 2026-11-27). The tables are in
+[DB.md](./DB.md#phisbilling_documents); the Add-on contract in [SERVER_ADDONS.md](./SERVER_ADDONS.md).
+
+- **The Provider's documents.** A `documents` task (section 15) asks `listDocuments` for the payment's
+  binding, records each document of a declared `Fetchable` kind once by its reference (unique per Site and
+  source) as `pending`, fetches what is `ready` with `fetchDocument` into Core's private store -- counting
+  the bytes against the Site's largest object and hashing them -- and marks it `available`. The task of a
+  capture waits for every declared kind but the credit note, the task of a refund for the credit note. The
+  document belongs to the payment's `documentSubject` and is listed by its `documentLabel` (`create` and
+  `createSubscription` take both; a subscription's payments inherit them), its sale's reference is the
+  subscription's number for a subscription's payments and the payment's reference otherwise. A task given up
+  after 14 days leaves its documents `failed`; Accounting's **Retry** (and `phis billing documents retry`)
+  starts it again.
+- **Issued documents.** An Add-on the Site's operator allowed as a source (`phis billing source allow`, for
+  kinds its manifest declares in `billing.issues`) issues for its own sales, or for an Add-on whose manifest
+  names it in `billing.issuedBy`. `issue` writes the document and, for an invoice, credit note or reminder,
+  takes its number from the open series of the key it names (a series that lists the source and the kind),
+  in the same transaction: the counter row per series and reset period is advanced under its row lock and
+  rolls back with the document -- gap-free, never a sequence; a voided document's number is a used number.
+  With `file: "follows"` the document is `pending` until `attachFile` streams its PDF (size and sha256
+  checked while it is stored, once); a receipt or confirmation may be issued with `file: "none"` and is
+  `available` at once, served as Core's page of its content. From `issue` on nothing of it changes but the
+  file, the status, `paymentState`, `Credited` and `Detached`. A credit note names its invoice and is refused
+  where the credited total would pass the invoice's; one that reaches it sets `Credited`. `void` withdraws a
+  document still `pending`; the job `payments.records.collect` voids an issued one still `pending` after 24
+  hours (reason "not completed"). `setPaymentState` is its issuer's, for an invoice or reminder. Idempotent on
+  the source's `idempotencyKey`: the same request answers the same document, another `idempotency_conflict`.
+- **Number series.** Defined by Admin and Accountant in Accounting (`/api/site/accounting/billing-series`) or
+  by `phis billing series`. The template is literal text (`A-Z a-z 0-9 - _ / .`), exactly one serial `{x…}`
+  whose number of `x` is a minimum width that keeps counting past it, and at most once each `{YYYY}`, `{YY}`
+  and `{MM}` (the issue date in the Site's time zone; a month never resets). `reset: "yearly"` needs a year in
+  the template; the number at the serial's minimum width fits 40 characters. Once a series numbered a
+  document (`Used`) its key, template and reset never change and its kinds only grow; a new template is a new
+  series of the same key that closes the old one in the same step (`replaces`). At most one open series per key.
+- **Access.** The person reads and opens their own documents, never a detached one; Admin and Accountant
+  (the Site roles, never the Site access `accounting`, which also admits a Maintainer) every document of the
+  Site; a Supporter the list of an open ticket's requester (`/api/site/support/tickets/:id/billing-documents`),
+  without content and without opening; a Maintainer nothing. An Add-on reads what it issued and what documents
+  its own sales; across issuers by `subject` only for an acting person who is that subject, or Admin or
+  Accountant; it opens a file only through `open`, for an acting person who may open it.
+- **Opening.** `open` answers a signed address on the Site's origin (`/api/site/billing-documents/:id/file`),
+  for one document and one disposition, valid 300 seconds by default and at most 900, served
+  `Cache-Control: private, no-store`. The signature is an HMAC under the installation's
+  `auth.transactionEncryptionKey`, which no Site runtime holds. A document not `available` is refused.
+- **Storage.** Core's own private store on the Site's Storage Provider under
+  `core/billing-documents/<site>/<year>/<id>`, never a Media Space's and never an Add-on's, with a quota of its
+  own (`phis site set --billing-quota-bytes/--billing-quota-objects`; none by default).
+- **Retention.** `retainUntil` is the end of the calendar year of the issue (in the Site's time zone) plus ten
+  years, for every issuer (OR art. 958f, MWSTG art. 70); the daily job `billing.documents.retain` removes the
+  file and then the record. Deleting a person's account detaches their documents (`Detached`, subject gone)
+  in the same transaction; staff reach them through the sale's reference. A Site purge removes them with it.
+- **Events.** `billing-document.changed` (issued, available, voided, credited, payment state changed, given
+  up) reaches the document's source Add-on and, where different, its consumer Add-on, where they declare the
+  handler; it carries no state.
 
 ## References
 

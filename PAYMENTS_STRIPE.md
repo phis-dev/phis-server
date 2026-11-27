@@ -105,7 +105,7 @@ Provider. No API key, webhook secret or payment token is a CLI argument or profi
 values enter through the existing protected secret-write mechanism. The adapter's bound
 `readCredentials()` resolves only that profile's validated references.
 
-`read` covers `listProfiles`, `listMethods`, `profileReach`, `refreshProfileReach`, `get`, `getOperation` and `getRefund`. Each remaining grant names its
+`read` covers `listProfiles`, `listMethods`, `profileFeatures`, `refreshProfileFeatures`, `chooseCollection`, `get`, `getOperation` and `getRefund`. Each remaining grant names its
 capability operation. Grants are checked on stored payments as well as new ones. Removing a grant
 stops the consumer's access; operator reconciliation remains possible without transferring ownership.
 There is no implicit default merchant profile and no automatic grant to an installed consumer.
@@ -370,7 +370,7 @@ implied by this implementation design.
 The policy's `basis:tax` is written into the Session's and the PaymentIntent's metadata so that an
 observation can read the Session's totals without the stored command. The adapter advertises
 `pricing: { bases: ["final", "net"], tax: ["none", "provider", "merchant-of-record"], maxDiscounts: 1,
-promotionCodes: "alone", collectsCustomerDetails: true, collectsTaxIds: true, merchantOfRecord }` on every method that
+promotionCodes: "alone", flags: CollectsCustomerDetails | CollectsTaxIds, merchantOfRecord }` on every method that
 Managed Payments admits (TWINT and stored methods state `merchantOfRecord: null`): one
 Checkout Session carries one coupon, which is either the stated discount or the customer's promotion
 code, and a create that asks for both is refused with `method_unavailable` before any Stripe call.
@@ -396,6 +396,28 @@ Create, line-item policy:
 - `managed_payments.enabled` under `merchant-of-record`, admitted only when every line is a
   `digital-goods` or `digital-service` category, since Managed Payments sells digital products only.
 
+**Under Managed Payments** (`merchant-of-record`) Stripe refuses three things the other policies send,
+found by test-mode requests on 2026-11-27 and followed by phis-stripe 84924fb:
+
+- no `allowed_payment_method_types`: Managed Payments chooses the methods, so the Session leaves the list
+  out and the method is the provider-managed selection (`methodKey: null`);
+- no `adaptive_pricing`: Adaptive Pricing is always on and `enabled: false` is refused, so the parameter is
+  left out. The Session, PaymentIntent and Charge stay in the agreed currency, so the amount check is
+  unchanged; what the customer saw in their own currency is `presentment`, informational (PAYMENTS.md,
+  section 4). Such a method declares `currency.conversion: "mandatory"`, `conversionCost: "customer"`, with
+  the account's settlement currencies as `conversionCurrencies`;
+- automatic capture only: `capture_method: manual` is refused (the invoice is made after the payment, with
+  no separate authorization), so a probe under `merchant-of-record` answers `captureModes: ["automatic"]`
+  without `PartialCapture`, Core lists no such method for a manual capture, and a create with manual capture
+  is refused with `method_unavailable` before Stripe is called.
+
+TWINT stays excluded under Managed Payments; every other policy sends the Session as before. What else the
+adapter declares per policy in 0.9 -- `collection` (`automatic` where it stores, `paymentRequest` wherever it
+has a checkout), `currency` with the settlement currencies read from the account's payout accounts and
+`SettlementRecords`, `documents` with the issuer per policy, and `listDocuments`, `fetchDocument` and
+`observeSettlements` -- is the phis-stripe side of the same round (the Shop's PLANS.md, sections 5.6, 10 and
+11.3).
+
 | Category | Stripe product tax code |
 | --- | --- |
 | `general` | `txcd_99999999` (General - Tangible Goods) |
@@ -409,9 +431,9 @@ Create, line-item policy:
 Observe: the Session is retrieved with `total_details.breakdown` expanded. The base amount is
 `amount_subtotal` plus `amount_shipping` minus the discounts whose coupon metadata names a stated
 reference. Each `breakdown.taxes` entry becomes a `tax` addition with the rate's display name,
-percentage, country and state, `inclusive` from the rate and `collectedBy: "provider"` when the
+percentage, country and state, the `Inclusive` bit from the rate and `collectedBy: "provider"` when the
 Session has Managed Payments enabled; an enabled calculation without any rate reports one zero tax
-addition labelled "Not collecting". `shipping_cost.amount_subtotal` becomes the inclusive `shipping`
+addition labelled "Not collecting". `shipping_cost.amount_subtotal` becomes the `shipping` addition with `Inclusive`
 addition. Each `breakdown.discounts` entry becomes a `discount` addition whose `code` is the stated
 reference or, for a customer code, the promotion code's `code` (retrieved by id when not expanded).
 `customer_details.address` and `tax_ids` fill the customer details. Totals are `null` while

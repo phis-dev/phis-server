@@ -165,6 +165,7 @@ Site Media           = Maintainer | Builder | Author | Publisher
 Support              = Maintainer | Supporter
 Accounting           = Maintainer | Accountant
 Accounting or support = Maintainer | Accountant | Supporter
+Billing              = Accountant
 ```
 
 Core Admin is omitted from the masks because the evaluator grants the Site-admin override centrally.
@@ -205,6 +206,21 @@ The routes over the same data:
   Admin (owner, 2026-11-26). A user's record, `GET ?userId=`, which the edit Form loads, and every writing
   method of `/api/site/admin/users` stay Site Admin only; a Supporter reads neither list nor history. The
   account itself sees only its live sessions (`GET /api/v1/auth/account/security`).
+- Billing documents and settlements (`billing:v1`, `payments:v1` `listSettlements`; PAYMENTS.md, sections 15
+  and 16) follow the Site roles Admin and Accountant (`PHI_ACCESS_BILLING`, `requireSiteBillingApiContext`)
+  and deliberately not the Site access `accounting`, which also admits a Maintainer (owner, 2026-11-27):
+  - one's own documents, `GET /api/site/account/billing-documents` and `POST .../{id}/open`, need a signed-in,
+    enabled membership and no role, and reach only the person's own documents, never a detached one;
+  - every document of the Site, `GET /api/site/accounting/billing-documents`, `.../{id}`, `POST .../{id}/open`
+    and `.../{id}/retry`, and the number series, `/api/site/accounting/billing-series` (`GET`, `POST`), `/{id}`
+    (`PATCH`), `/{id}/close` and `/preview` (`POST`), are Admin and Accountant only;
+  - a Supporter (and the Admin) who may work on a support ticket reads the list of its requester's documents
+    while the ticket is open, `GET /api/site/support/tickets/{ticketId}/billing-documents`, without content
+    and without opening a file; a Maintainer is refused there, though the Site access `support` admits one;
+  - a Maintainer reaches none of it. An Add-on opens a file only for an acting person who may open it by
+    these rules, and `listSettlements` answers only for an acting Admin or Accountant;
+  - the file itself is served from `GET /api/site/billing-documents/{id}/file` by the signed, short-lived
+    address `open` gave; nothing else opens it.
 - One's own addresses on the Site, `/api/site/account/addresses` (`GET`, `POST`) and `/{id}` (`PUT`,
   `DELETE`), need a signed-in, enabled membership and no role (`requireSiteAuthenticatedApiContext`); each
   reaches only the actor's own current addresses. One's own telephone numbers are `PATCH

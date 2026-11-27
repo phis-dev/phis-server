@@ -199,7 +199,7 @@ The target PostgreSQL schema for `phis` is:
 - `hostname VARCHAR(255) NOT NULL UNIQUE`
 - `default_locale VARCHAR(8) NOT NULL DEFAULT 'en'`
 - `available_locales VARCHAR(8)[] NOT NULL DEFAULT ARRAY['en']::VARCHAR(8)[]`
-- `entitlement_grace_days SMALLINT NOT NULL DEFAULT 14` (`CHECK BETWEEN 0 AND 14`) -- whole days an entitlement entry bound to a subscription goes on counting after its paid period while the subscription has not ended (`phis site set --entitlement-grace-days`; existing databases received `ALTER TABLE phis.sites ADD COLUMN IF NOT EXISTS entitlement_grace_days SMALLINT NOT NULL DEFAULT 14 CHECK (entitlement_grace_days BETWEEN 0 AND 14)` by hand).
+- `entitlement_grace_days` is gone (phis-contracts 0.9, owner 2026-11-27): every subscription carries its own `graceDays` (`payment_subscriptions`). An existing database copies the Site's value onto each subscription and then drops the column, by hand, as the serving role and after the Shop's sweep part 1 (`ALTER TABLE phis.sites DROP COLUMN IF EXISTS entitlement_grace_days`; prepared as `/var/tmp/phis-0.9-prod/40-sites-drop-grace.sql`, the development database `phi_server_dev` keeps it until the Shop's sweep has run there).
 - `users_access_log_days SMALLINT NOT NULL DEFAULT 90` (`CHECK BETWEEN 1 AND 3650`) -- whole days the Site keeps its `users:v1` access log (`phis.users_access_log`); the Core job `users-access-log.prune` drops older rows. A per-Site setting like the grace days, so a column of the row, set with `phis site set --users-access-log-days` and shown by `phis site list`. Added 2026-11-24; existing databases receive `ALTER TABLE phis.sites ADD COLUMN IF NOT EXISTS users_access_log_days SMALLINT NOT NULL DEFAULT 90 CHECK (users_access_log_days BETWEEN 1 AND 3650)` by hand.
 - `time_zone VARCHAR(64) NOT NULL DEFAULT 'UTC'` -- the IANA zone the Site's dates and times are shown in, server render and browser alike (`phis site set --time-zone`). Added 2026-11-09; existing databases received `ALTER TABLE phis.sites ADD COLUMN IF NOT EXISTS time_zone VARCHAR(64) NOT NULL DEFAULT 'UTC'` by hand.
 - `flags INT NOT NULL DEFAULT 0`
@@ -1963,7 +1963,7 @@ Contract:
 - `product` is a product id (`phis.products`) and no foreign key: an entry whose product does not exist (any more) is kept and does not count.
 - `flags` are `PhisEntitlementFlag`: `1 = Revoked`, `2 = Suspended`.
 - There is no status column. An entry is valid while `flags & 3 = 0 AND starts_at <= NOW() AND (ends_at IS NULL OR ends_at > NOW())` and its product exists and is not `locked`, judged by the database's clock on every read, so an entry that ends needs no write to stop counting. The product row is found by splitting `product` at its last colon into `supplier_addon_id` and `key`.
-- `subscription_id` binds the entry to a subscription of `payments:v1` (`payment_subscriptions`, whose `consumer_addon_id` is the entry's `source`; checked when the entry is written). A bound entry has no written `ends_at`; its validity is derived on every read from the subscription's `record`: no `record->'period'` (nothing paid yet) counts for nothing, otherwise it counts until `record->'period'->>'endsAt'` plus `sites.entitlement_grace_days` days, or plus 0 once the subscription has ended (`record->>'status' = 'canceled'` or `record->>'endedAt'` set). The `endsAt` shown is the period's end without the grace; the state's `until` (`readEntitlementState`) is the instant an entry stops counting -- the written `ends_at`, or for a bound entry that period end plus the grace, or plus 0 -- one SQL fragment with `valid`, so the two cannot disagree.
+- `subscription_id` binds the entry to a subscription of `payments:v1` (`payment_subscriptions`, whose `consumer_addon_id` is the entry's `source`; checked when the entry is written). A bound entry has no written `ends_at`; its validity is derived on every read from the subscription's `record`: no `record->'period'` (nothing paid yet) counts for nothing, otherwise it counts until `record->'period'->>'endsAt'` plus the subscription's own `record->>'graceDays'` days (phis-contracts 0.9), or plus 0 once the subscription has ended (`record->>'status' = 'canceled'` or `record->>'endedAt'` set). The `endsAt` shown is the period's end without the grace; the state's `until` (`readEntitlementState`) is the instant an entry stops counting -- the written `ends_at`, or for a bound entry that period end plus the grace, or plus 0 -- one SQL fragment with the entry's `standing` (`valid`, `not-started`, `ended`, `revoked`, `suspended`, `product-locked`, derived on every read), so the two cannot disagree. `entitlements:v1` `update` with `subscriptionId: null` sets `subscription_id` to NULL (and `ends_at` to what the same call states, else NULL): the entry no longer follows its subscription.
 - `quantity` is set exactly where the product is `counted`; the answer for a counted product is the sum over the valid entries on the product itself. Core counts no use.
 - A bundle is written as its one entry and resolved on every read (`readEntitlementState`, `readEntitlementStates` for several products in one statement, `checkMany`): the entries that count for a product are those on the product and on every bundle whose `products.parts` contain it, directly or through nested bundles, walked in the same query (a recursive CTE over the Site's `products`, stopping at a `locked` product; the product itself must exist and not be `locked`; each row of the walk keeps the product it started from, so one walk answers for every product asked). The answer's `via` names the products whose valid entries these are; `until` is taken over all of them; a bundle is never counted. `listEntitlements` with `resolveBundles` walks the same containment without the lock stop and lists those entries as they are; with `subjectReferences` it lists several subjects' entries in the same one statement. It reads one entry past `PHIS_ENTITLEMENT_LIST_MAX` (500), and its callers refuse a listing that long instead of cutting it. No row is derived for a part.
 - A new row is written only for a product that exists and is `active`, under a share lock on the product row (so `products.remove` and a state move cannot slip in between).
@@ -2677,15 +2677,17 @@ there is no product purge command. Fixture teardown in database tests is not an 
 - `merchant_identity VARCHAR(255) NULL`, `revision INT NOT NULL DEFAULT 1 CHECK (> 0)`.
 - `enabled BOOLEAN NOT NULL DEFAULT FALSE`, `retired BOOLEAN NOT NULL DEFAULT FALSE`.
 - `probed_at TIMESTAMPTZ NULL`: the last time Core asked the Provider about the profile, in any currency
-  (a probe, or a refresh of its reach claiming its turn).
-- `methods JSONB NULL`: the last validated probe in each currency it was asked in, keyed by the uppercase
-  currency code: `{ "CHF": { "probedAt": "<ISO instant>", "methods": [<PhisPaymentProviderProbe methods>] } }`.
-  A probe in one currency replaces that currency's entry and keeps the others. `profileReach` reads it
-  without a Provider call ([PAYMENTS.md](./PAYMENTS.md#14-profile-reach)). No other shape is read: a
-  profile that still holds the earlier list is swept to `NULL` and probed again by hand.
+  (a probe, or a refresh claiming its turn).
+- `features JSONB NULL`: what the Provider declared when Core last asked, keyed by the uppercase currency
+  code, each a `PhisPaymentProfileFeatures` (`{ currency, probedAt, policies: PhisPaymentPolicyRecording[] }`,
+  one recording per pricing policy the methods declare). A probe in one currency replaces that currency's
+  entry and keeps the others. `profileFeatures` and `chooseCollection` read it without a Provider call
+  ([PAYMENTS.md](./PAYMENTS.md#14-profile-features-and-the-collection-mode)). It replaced `methods` (the
+  probe per currency) in phis-contracts 0.9: an existing database adds `features`, drops `methods` by hand
+  (`30-payments-0.9.sql`) and probes every profile again in its currencies.
 - Enabling requires a pinned identity, successful probe and non-retired profile. CLI enabling also
   verifies the registered/enabled Provider and matching artifacts/capabilities on ready instances.
-- Profile writes increment the revision, clear the probe/methods and disable new creation. They cannot
+- Profile writes increment the revision, clear the probe and its recording and disable new creation. They cannot
   replace the provider/mode or reuse a retired key. A new identity discovered after credential rotation
   is refused; existing payment bindings are never migrated. Retirement preserves existing reads and
   remote reconciliation while the Provider remains enabled.
@@ -2711,11 +2713,15 @@ there is no product purge command. Fixture teardown in database tests is not an 
   result and observes once more (a bounded number of times) when it was told during its own claim; the
   reconciliation that claimed after the knock and observed the Provider clears it. While set, and the
   payment has a binding, the bounded maintenance reconciliation selects the payment.
+- `document_subject VARCHAR(255) NULL`, `document_label VARCHAR(200) NULL`: whose documents the payment's are
+  (the buyer's entitlement subject from `create`'s or `createSubscription`'s `documentSubject`) and their list
+  line (`documentLabel`); NULL for a guest's and for the payment's description. Core's own, never in `record`.
 - `created_at`, `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`.
 - Unique `(site_id, consumer_addon_id, id)` supports scoped operation FKs. A partial unique index on
   `(site_id, profile_key, binding->>'reference')` prevents sharing one established remote binding.
 - The unique active-reference index covers `(site_id, consumer_addon_id, record->>'reference')`
-  while the payment is nonterminal or reconciliation is required. Captured/refunded payments retain
+  while the payment is nonterminal or reconciliation is required (`(record->>'flags')::int & 1`,
+  `PhisPaymentFlag.ReconciliationRequired`). Captured/refunded payments retain
   the reference; a confirmed failed/expired/canceled attempt permits a new explicit attempt.
 - Reservations and claim changes lock this row. No transaction spans a PSP call. Applying a result
   checks generation/token under the same lock; a superseded response cannot overwrite newer facts.
@@ -2761,19 +2767,27 @@ COMMIT;
 
 ### `phis.payment_subscriptions`
 
-An agreement Core charges on a schedule of its own. Every period is settled by an ordinary payment
-against the payer's stored method; the schedule, the retries and the end belong to Core.
+An agreement whose schedule Core keeps. Every period is settled by an ordinary payment -- under
+`automatic` against the payer's stored method, under `payment-request` on a checkout the customer is asked
+to; the schedule, the retries, the requests and the end belong to Core.
 
 - `id UUID PRIMARY KEY`; `site_id`, `consumer_addon_id`, `profile_key` as on `payments`.
 - `idempotency_key VARCHAR(255)`, unique per Site and consumer, and `request JSONB`: the canonical
   arguments it was created from. The same key with other arguments conflicts.
-- `record JSONB`: `PhisPaymentSubscription`; checked status `pending`, `active`, `past_due`, `unpaid` or
-  `canceled`. A consumer's reference is unique among its subscriptions that are not `canceled`.
-- `anchor_at TIMESTAMPTZ NULL`: the start of the first period, set when the first payment is captured.
-  Every later boundary is computed from it and the period index, never from the previous boundary or
-  from the day a charge succeeded, so a late charge and a short month do not move the schedule.
+- `record JSONB`: `PhisPaymentSubscription`; checked status `pending`, `active`, `past_due` or `canceled`
+  (`payment_subscriptions_record_check`; `unpaid` is gone), `collection.mode` `automatic` or
+  `payment-request` (`payment_subscriptions_collection_check`; `provider-managed` is refused until built)
+  and `graceDays` 0 to 30 (`payment_subscriptions_grace_check`). Yes/no states are `flags`
+  (`CustomerActionRequired` 1, `CancelAtPeriodEnd` 2). A consumer's reference is unique among its
+  subscriptions that are not `canceled`.
+- `anchor_at TIMESTAMPTZ NULL`, `term_first_index INT NOT NULL DEFAULT 0`: the start of the current term
+  and the index of its first period (the record's `term`), set when the first payment is captured and by
+  an applied change. Every later boundary is computed from them and the period index, never from the
+  previous boundary or from the day a charge succeeded, so a late charge and a short month do not move the
+  schedule.
 - `next_charge_at TIMESTAMPTZ NULL`: mirrors `record.nextChargeAt` for the scheduler's partial index. It
-  is when Core next acts by itself: a renewal, a retry, or the end of the time a customer is waited for.
+  is when Core next acts by itself: a renewal, a retry or the grace's end under `automatic`; a request, a
+  reminder, the due moment or the grace's end under `payment-request`.
 - `lease_token`, `lease_until`: the scheduler's claim, so that two runs do not work on one subscription.
   A payment's outcome arriving during a run writes the record and leaves the lease alone.
 
@@ -2783,6 +2797,11 @@ against the payer's stored method; the schedule, the retries and the end belong 
   the schedule tries. `record JSONB` is `PhisPaymentSubscriptionPeriod`: `open`, `paid`, `failed`, `void`.
 - `attempts SMALLINT`: how many charges the schedule made for the period. The dunning policy counts
   these; a payment the customer makes on a checkout to settle the period is listed and not counted.
+- `moments SMALLINT NOT NULL DEFAULT 0` (0 to 15): under `payment-request`, the moments of the requested
+  period already said, each once (1 `requested`, 2 `reminder`, 4 `due`, 8 `grace-ending`).
+- The record carries `requestedAt` (under `payment-request`), `graceEndsAt` (its start plus the
+  subscription's grace: when it fails unpaid), `changeId` (the change that opened it, the first of its term)
+  and `endedEarlyAt` (where a change cut it short; `endsAt` stays as planned).
 - The first period has no row until its payment is captured. A later one is created when the paid
   period is over, and its payment is referenced `<subscription reference>#<index>`; the rule that one
   reference has one active payment is what keeps a second charge from being made beside an unresolved
@@ -2805,6 +2824,44 @@ ALTER TABLE phis.addon_event_outbox ADD CONSTRAINT addon_event_outbox_subject_ch
   );;
 COMMIT;
 ```
+
+### `phis.payment_subscription_changes`
+
+A change of a subscription's terms ([PAYMENTS.md](./PAYMENTS.md#133-changes-of-terms)).
+
+- `id UUID PRIMARY KEY`; `site_id`, `consumer_addon_id`; `subscription_id` `ON DELETE RESTRICT`.
+- `reference VARCHAR(40)`, unique per subscription; `idempotency_key VARCHAR(255)`, unique per Site and
+  consumer, with `request JSONB` (the canonical arguments; the same key with others conflicts).
+- `payment_id UUID NULL UNIQUE`: the payment of `due`, linked in that payment's reservation transaction.
+- `record JSONB`: `PhisPaymentSubscriptionChange`; checked status `scheduled`, `awaiting_payment`, `applied`,
+  `void` and timing `now` or `period-end`. A partial unique index on `subscription_id` where the status is
+  `scheduled` or `awaiting_payment`: at most one pending change. The subscription's record mirrors it as
+  `pendingChange` while it is pending.
+
+### `phis.payment_record_tasks`
+
+What Core still collects from a Provider after a capture or a succeeded refund (PAYMENTS.md, sections 15
+and 16).
+
+- `id BIGSERIAL`; `site_id`; `payment_id` and `refund_id NULL` (NULL: the capture), both `ON DELETE CASCADE`;
+  `kind` `documents` or `settlements`; unique `NULLS NOT DISTINCT (payment_id, refund_id, kind)`, so the same
+  fact observed twice owes nothing more.
+- `state` `pending`, `done` or `failed`; `attempts` (counted only where the Provider answered),
+  `next_attempt_at` (after 5 and 15 minutes, 1 and 6 hours, then daily), `last_error`, the job's lease
+  (`lease_token`/`lease_until`, both or neither), `created_at` (from which the 14 days are counted).
+- Partial index on `next_attempt_at` where `pending`: what the Core job `payments.records.collect` claims.
+
+### `phis.payment_settlements`
+
+What one capture or refund moved on the merchant's balance at the Provider (`listSettlements`).
+
+- `id UUID PRIMARY KEY`; `site_id`, `profile_key` (FK to the profile); `payment_id`, `refund_id NULL`
+  (`ON DELETE RESTRICT`); `direction` `credit` or `debit`; `provider_reference`, unique per Site and profile.
+- `gross_currency`, `gross_minor` (the payment's currency); `settled_currency` with `settled_minor`,
+  `fee_minor`, `withheld_tax_minor NULL` and `net_minor`, all `BIGINT >= 0` and checked
+  `net = settled − fee − COALESCE(withheld_tax, 0)`; `exchange_rate NUMERIC(20,10) NULL` (the Provider's
+  string, never used in arithmetic); `available_at NULL`, `booked_at`, `recorded_at`.
+- Never rewritten: a record seen again is not written, a correction is a further record.
 
 ### `phis.payment_operations`
 
@@ -2854,7 +2911,8 @@ COMMIT;
 - `addon_id VARCHAR(255) NOT NULL REFERENCES phis.server_addons(addon_id) ON DELETE CASCADE`
 - `event VARCHAR(120) NOT NULL` (CHECK `<> ''`)
 - `thread_id INT NULL REFERENCES phis.threads(id) ON DELETE CASCADE`
-- `subject_kind VARCHAR(16) NOT NULL DEFAULT 'thread'` (`thread`, `payment`, `subscription`, `emitted`, `entitlement`, `product`, `asset` or `user`)
+- `subject_kind VARCHAR(16) NOT NULL DEFAULT 'thread'` (`thread`, `payment`, `subscription`, `emitted`, `entitlement`, `product`, `asset`, `user` or `billing-document`; the last for `billing-document.changed`, payload `{ documentId, reference, version }`)
+- A `payment.changed` row of the subject `subscription` carries `changeId` and `moment` in its payload (phis-contracts 0.9).
 - `payment_id UUID NULL REFERENCES phis.payments(id) ON DELETE RESTRICT`
 - `payload JSONB NOT NULL DEFAULT '{}'::jsonb`
 - `emitter VARCHAR(255) NULL REFERENCES phis.server_addons(addon_id) ON DELETE CASCADE`
@@ -3176,6 +3234,83 @@ Contract:
       ON DELETE CASCADE
   );
   ```
+
+## Billing documents
+
+`billing:v1` ([PAYMENTS.md](./PAYMENTS.md#16-billing-documents-billingv1)). Runtime queries live in
+`src/db/billing.mts`; the number series' rules in `src/lib/billing/series.ts`, shared by the Accounting
+routes and `phis billing`. Kinds are stored as bits wherever a set of them is: 1 `invoice`, 2 `credit-note`,
+4 `reminder`, 8 `receipt`, 16 `confirmation`.
+
+### `phis.billing_documents`
+
+- `id UUID PRIMARY KEY`; `site_id` `ON DELETE CASCADE` (a Site purge removes them); `kind`; `number
+  VARCHAR(40) NULL`; `label`; `issuer_kind`/`issuer_name`/`issuer_tax_id`; `source_kind` (`provider` or
+  `addon`) and `source_addon_id`; `consumer_addon_id` and `reference` (the sale's: an order or subscription
+  number).
+- `subject_id INT NULL REFERENCES phis.entitlement_subjects ON DELETE SET NULL`: whose it is; NULL for a
+  guest's and once detached. `deleteUserAccount` detaches in its own transaction (`flags | 4`, subject NULL)
+  before the account and its subjects go.
+- `payment_id`, `refund_id`, `subscription_id`, `period_index` (the links), `corrects_id` (a credit note's or
+  reminder's invoice; `ON DELETE RESTRICT`).
+- `provider_reference` (a Provider's document: its own id, unique per Site and source, and present exactly
+  for `source_kind = 'provider'`); `series_id` and `series_year` (an issued number's series and counter
+  period; unique `(site_id, series_id, number)`); an issuer's own number for a receipt or confirmation is
+  unique per Site, source and kind.
+- `issued_at`; `currency`, `total_minor BIGINT`; `presentment_currency`/`presentment_minor` (both or neither).
+- `status` `pending`, `available`, `voided` (only with the `Voided` bit), `failed`; `content JSONB NULL` (an
+  issued document's `PhisBillingDocumentContent`); `payment_state JSONB NULL` (an invoice's or reminder's).
+- The file: `content_type` (`application/pdf` or `text/html`), `byte_size`, `sha256 CHAR(64)`, `storage_key`,
+  all four or none; the key is `core/billing-documents/<site>/<year>/<id>` in Core's private store.
+- `idempotency_key` with `request JSONB` (an issued document's; unique per Site and source), `void_reason`,
+  `retain_until` (the end of the issue year plus ten years), `flags` (1 `Voided`, 2 `Credited`, 4
+  `Detached`), `created_at`, `updated_at`, `version`.
+- Immutable once issued: only the file (once), `status`, `payment_state`, `flags`, `subject_id` (on detach)
+  and `version` are written after the insert.
+- Indexes: the person's list (`site_id, subject_id, issued_at DESC, id DESC` where a subject), the Site's
+  list, the sale's references, the payment, the corrections, `pending` documents by age (the 24-hour void),
+  and `retain_until` (the daily `billing.documents.retain`).
+
+### `phis.billing_number_series`, `phis.billing_series_sources`, `phis.billing_number_counters`
+
+- A series: `id UUID`, `site_id`, `key` (slug, at most one open series per key: partial unique index where
+  `(flags & 1) = 0`), `label`, `template VARCHAR(80)`, `reset` (`none` or `yearly`), `kinds` (bits 1 to 4),
+  `flags` (1 `Closed`, set with `closed_at`; 2 `Used`, set by the first number), `created_at`, `closed_at`.
+- `billing_series_sources (series_id, addon_id)`: the Add-ons that may number from a series.
+- `billing_number_counters (series_id, period_year, next_value)`: one row per series and counter period (the
+  issue year for a yearly reset, 0 for none), created at 1 and advanced by `UPDATE ... SET next_value =
+  next_value + 1 RETURNING` in the issuing transaction -- gap-free, serialized on the row, never a sequence.
+
+### `phis.billing_document_sources`
+
+- `(site_id, addon_id)` primary key, `kinds` (bits), `granted_at`: the operator's allow-list of issuing
+  sources (`phis billing source allow|deny|list`). An Add-on issues only kinds listed here and declared in
+  its manifest's `billing.issues`.
+
+### `phis.billing_storage`
+
+- `site_id` primary key, `bytes`, `objects` (what Core's billing store holds on the Site, booked before a
+  file is written and given back when it is not), `quota_bytes NULL`, `quota_objects NULL` (its own ceiling,
+  `phis site set --billing-quota-bytes/--billing-quota-objects`, `none` lifts it).
+
+### Existing databases (phis-contracts 0.9, owner 2026-11-27)
+
+No `ALTER` ships in a release before v1; an existing database receives the 0.9 shape by hand, as the
+serving role, in this order (prepared, guarded and transactional, under `/var/tmp/phis-0.9-prod/`; each is
+safe to run twice and the development database `phi_server_dev` received 10, 30 and 50 so):
+
+1. `10-products-flags.sql` -- the products' `pending_terms` and the storage probe shapes (above).
+2. `30-payments-0.9.sql` -- the new payment tables and columns, `payment_profiles.methods` -> `features`, and
+   the JSONB sweep: every subscription's `dunning` becomes `collection: { mode: "automatic", dunning: {
+   retryAfterDays } }` with `graceDays` its Site's `entitlement_grace_days`, `flags`, `term` and
+   `pendingChange: null`; every period gains `requestedAt`, `graceEndsAt`, `changeId`, `endedEarlyAt`;
+   payments, stored methods and refunds take `flags` for their booleans, totals `presentment: null`. Refused
+   (`RAISE EXCEPTION`) where a subscription is `unpaid` or a retry lies past its Site's grace; every count
+   checked. Then `phis payment profile probe` per profile and currency.
+3. The Shop's sweep part 1 (phis-shop PLANS.md 2.1).
+4. `40-sites-drop-grace.sql` -- drops `sites.entitlement_grace_days`.
+5. `50-billing-0.9.sql` -- the billing tables and the outbox subject `billing-document`.
+6. `20-addons-json-flags.mjs <config/phis-addons.json>` (`--dry-run` first) -- `enabled` -> `flags`.
 
 ## Content and Translation Model
 

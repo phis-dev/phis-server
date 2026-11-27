@@ -441,12 +441,12 @@ the runtime file is restored. Refuses when an override with a `sourceLocale` alr
 key. Then creates the configured directories that are missing, as `phis install` does; one that cannot
 be made or is wrong is a warning (JSON `directoryProblems`), and the Site stays created.
 
-### `phis site set --key <site key> [--name] [--hostname] [--public-base-url] [--support-email] [--time-zone] [--entitlement-grace-days]`
+### `phis site set --key <site key> [--name] [--hostname] [--public-base-url] [--support-email] [--time-zone] [--users-access-log-days] [--billing-quota-bytes] [--billing-quota-objects]`
 
-Updates the given fields; at least one is required. `--entitlement-grace-days <0-14>` is the number of whole days
-an entitlement entry bound to a subscription ([`entitlements:v1`](../SERVER_ADDONS.md#entitlementsv1)) goes on
-counting after its paid period while the subscription has not ended (default 14, 0 ends it with the period);
-`phis site list` shows it as `entitlement-grace-days`. Also rewrites the mail sender
+Updates the given fields; at least one is required. `--billing-quota-bytes <n|none>` and
+`--billing-quota-objects <n|none>` set the ceiling of Core's private billing store on the Site (PAYMENTS.md,
+section 16; none by default, `none` lifts it). The Site-wide `--entitlement-grace-days` is gone with
+phis-contracts 0.9: every subscription carries its own grace. Also rewrites the mail sender
 (`no-reply@<hostname>`), the sender name and the contact recipient from the resulting values.
 
 ### `phis site enable|disable --key <site key>`
@@ -1663,11 +1663,13 @@ financial evidence.
 
 Probe is read-only against the PSP and records merchant identity/mode/method features; a changed
 merchant or mode fails closed. `--currency` is required and names one or more currencies, comma-separated
-(`CHF,EUR`); there is no default. The Provider is asked once per currency and every currency is answered
-before any is recorded, so a currency in which it offers no method refuses the command
-(`method_unavailable`) and records nothing. Each currency is recorded beside the ones recorded before; a
-currency not named keeps its recording. What a consumer reads as the profile's reach in a currency
-(`profileReach`) is this recording, so a profile is probed in every currency a consumer sells in. Enable
+(`CHF,EUR`); there is no default. The Provider is asked per currency, once under `final`/`none` and then once
+per further pricing policy its methods declare, each in both usages, and every currency is answered before
+any is recorded, so a currency in which it offers no method refuses the command (`method_unavailable`) and
+records nothing. Each currency is recorded beside the ones recorded before (`payment_profiles.features`, one
+recording per policy; the JSON answer's `features`); a currency not named keeps its recording. What a consumer
+reads as the profile's features and the collection mode a plan would get in a currency (`profileFeatures`,
+`chooseCollection`) is this recording, so a profile is probed in every currency a consumer sells in. Enable
 probes again and requires every ready serving instance (the
 existing 90-second readiness window) to carry the installed Provider version and Core Payment
 capabilities. It cannot establish that a webhook endpoint is reachable. Configure the separate
@@ -1679,9 +1681,9 @@ recorded in. A profile or currency that cannot be asked -- a missing secret, a P
 answer, another merchant -- keeps what was recorded before and is reported as a warning (`paymentReach`
 in the JSON output); the command itself still succeeds.
 
-Before v1 the recording has one shape. A profile probed by an earlier release holds a list in `methods`:
-sweep it (`UPDATE phis.payment_profiles SET methods = NULL WHERE jsonb_typeof(methods) = 'array'`) and
-probe it again with every currency it serves.
+Before v1 the recording has one shape. A profile recorded before phis-contracts 0.9 held `methods` (a probe
+per currency); the column is replaced by `features` by hand ([DB.md](../DB.md#existing-databases-phis-contracts-09-owner-2026-11-27))
+and the profile is probed again with every currency it serves.
 
 The maintenance task selects at most 100 unresolved payments, reconciles stored remote commands and
 reports unavailable/concurrent claims. Dry-run changes nothing and makes no Provider calls. Retries
@@ -1745,10 +1747,11 @@ phis entitlement revoke --site demo --product @acme/licenses:pro --reference sup
   for the products of exactly the suppliers named (`--suppliers`, comma-separated), and replaces what was
   allowed for that source before; the row records no granting user (the operator). `source deny` takes the
   leave back; entries the source wrote stay. `source list` shows one line per source. A supplier needs no
-  row for its own `free` product.
+  row for its own product that carries `Free`.
 - `list` shows one user's entries on the Site, every source's: product, source, reference, start and end
   (for an entry bound to a subscription, the end of its latest paid period, and the subscription's id),
-  quantity, flags and whether the entry is valid now (it is not while its product is locked or gone). A
+  quantity, flags and its standing now (`valid`, `not-started`, `ended`, `revoked`, `suspended`,
+  `product-locked` -- the last while its product is locked or gone). A
   user id that names no account is refused with `No such user at <site>.` (exit code 1, like the other
   not-found answers), and `list` leaves no subject behind for it. More than 500 entries are refused, never
   cut: name one `--product`.
@@ -1757,3 +1760,37 @@ phis entitlement revoke --site demo --product @acme/licenses:pro --reference sup
   product must exist and be `active`, `--quantity` is required exactly when the product is counted, and
   `--ends` must be an ISO instant in the future. The operator's entry is never bound to a subscription; that is a source's own. Granting the same `--reference` again answers the first
   entry and writes nothing. `revoke` revokes the `@phis/server` entry of that product and reference.
+
+## Billing
+
+Core keeps the Site's billing documents and number series (`billing:v1`, [PAYMENTS.md](../PAYMENTS.md) section
+16). `phis billing` allows the Add-ons that issue documents, defines number series (the Accounting page
+"Number series" does the same for Admin and Accountant) and lists and retries documents. `--site <site key>`
+is required on every subcommand.
+
+```bash
+phis billing source list --site demo
+phis billing source allow --site demo --addon @phis/invoices --kinds invoice,credit-note,reminder
+phis billing source deny --site demo --addon @phis/invoices
+phis billing series list --site demo
+phis billing series preview --site demo --template 'PHI-{YY}{xxxxx}' --reset yearly
+phis billing series add --site demo --key invoice --label "Invoices" --template 'PHI-{YY}{xxxxx}' --reset yearly \
+  --kinds invoice,credit-note,reminder --sources @phis/invoices
+phis billing series edit --site demo --id <series id> [--label <text>] [--kinds <...>] [--sources <@a/b,...>]
+phis billing series close --site demo --id <series id>
+phis billing documents list --site demo [--failed] [--limit 50]
+phis billing documents retry --site demo --id <document id>
+```
+
+- `source allow` allows an installed Add-on to issue the kinds named, at most those its manifest declares in
+  `billing.issues`, and replaces what it was allowed before; `deny` takes the leave back, its documents stay.
+- A template is literal text (`A-Z a-z 0-9 - _ / .`), exactly one serial `{x...}` -- its `x` are a minimum width
+  and the serial keeps counting past it -- and at most once each `{YYYY}`, `{YY}`, `{MM}` (the issue date in the
+  Site's time zone; the month never resets). `--reset yearly` needs a year in the template. `preview` answers
+  the number the next issue would get now. Once a series has numbered a document its key, template and reset
+  never change and its kinds only grow; a new template is `series add` with the same key and `--replaces <id>`,
+  which closes the old series in the same step. `--sources` names installed Add-ons whose manifest declares
+  `billing.issues`.
+- `documents list` shows the newest documents (`--failed`: those whose fetching from the Provider was given
+  up); `documents retry` makes a failed Provider's document `pending` again and starts its collection task
+  over -- the server's job `payments.records.collect` asks the Provider at its next run.
